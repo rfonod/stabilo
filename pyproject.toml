@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stabilo"
+dynamic = ["version"]
+description = "Reference frame video stabilization with optional user-provided masks."
+authors = [
+    { name = "Robert Fonod", email = "robert.fonod@ieee.org" },
+]
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
+keywords = ["stabilo", "video-stabilization", "object-stabilization", "mask", "reference-frame", "computer-vision"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "numpy>=1.26.4,<2.0",
+    "opencv-python>=4.6.0",
+    "pyyaml>=5.3.1",
+    "tqdm>=4.64.0",
+]
+
+[project.optional-dependencies]
+extras = [
+    "matplotlib>=3.5.0"
+]
+
+[tool.setuptools] 
+packages = { find = { where = ["."], include = ["stabilo", "stabilo.*"] } }
+package-data = { "stabilo" = ["**/*.yaml", "**/*.txt"] }
+
+[tool.setuptools.dynamic]
+version = { attr = "stabilo.__version__" }
+
+[project.urls]
+homepage = "https://github.com/rfonod/stabilo/"
+repository = "https://github.com/rfonod/stabilo/"
+issues = "https://github.com/rfonod/stabilo/issues/"
+releases = "https://github.com/rfonod/stabilo/releases"

@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: Stabilo
+abstract: Reference frame video stabilization with or without user-provided masks.
+message: If you use this software, please cite it as below.
+type: software
+authors:
+  - given-names: Robert
+    family-names: Fonod
+    email: robert.fonod@ieee.org
+    affiliation: EPFL
+    orcid: 'https://orcid.org/0000-0002-9434-3156'
+identifiers:
+  - type: doi
+    value: XXX
+    description: Zenodo archive
+repository-code: 'https://github.com/rfonod/stabilo'
+url: 'https://github.com/rfonod/stabilo'
+license: MIT
+version: 0.1.0
+date-released: '2024-06-18'
