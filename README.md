@@ -1,6 +1,6 @@
 # Stabilo
 
-![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) ![GitHub](https://img.shields.io/badge/Development-Active-brightgreen)
+[![DOI](https://zenodo.org/badge/816993640.svg)](https://zenodo.org/doi/10.5281/zenodo.12117092) ![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) ![GitHub](https://img.shields.io/badge/Development-Active-brightgreen)
 
 🚧 **Development Notice** 🚧
 
@@ -119,6 +119,7 @@ license = {MIT},
 month = jun,
 title = {{Stabilo}},
 url = {https://github.com/rfonod/stabilo},
+doi = {10.5281/zenodo.12117092},
 version = {0.1.0},
 year = {2024}
 }
