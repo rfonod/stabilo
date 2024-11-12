@@ -8,36 +8,42 @@ find_threshold_models.py - Find linear models for BRISK, KAZE, and AKAZE detecto
 Description:
     This script develops linear regression models for feature detectors (BRISK, KAZE, AKAZE) based on their performance metrics, 
     specifically analyzing the relationship between detector thresholds and the average number of keypoints detected per image. 
-    It processes images from a specified dataset directory, optionally applying a mask and CLAHE (Contrast Limited Adaptive Histogram Equalization) 
-    for image preprocessing. The outcomes include saving the regression coefficients, generating plots to visualize relationships, 
-    and saving raw and filtered data for extended analysis.
+    It processes images from a specified dataset directory, optionally applying a mask and CLAHE (Contrast Limited Adaptive Histogram 
+    Equalization) for image preprocessing. Outcomes include saving the regression coefficients, generating plots to visualize 
+    relationships, and saving raw and filtered data for extended analysis.
 
 Usage:
-    find_threshold_models.py [options]
+    find_threshold_models.py <dir> [options]
+
+Arguments:
+    dir : Path to the directory containing the dataset
 
 Options:
-    --dataset-dir, -dir <dir>   : Directory containing the image dataset. [default: scenes]
-    --detectors, -d <detectors> : List of detectors to analyze. Choices include 'brisk', 'kaze', 'akaze'. [default: brisk, kaze, akaze]
+    --detectors, -d <detectors> : List of detectors to analyze. Choices include 'brisk', 'kaze', 'akaze'. [default: ['brisk', 'kaze', 'akaze']]
     --mask-use, -m <mask_use>   : Specify whether to use a mask during detection. Choices: True, False. [default: [True, False]]
     --clahe-use, -c <clahe_use> : Specify whether to apply CLAHE on images. Choices: True, False. [default: [True, False]]
+
+Note:
+    - This script requires extra dependencies. Install them using `pip install .[extras]` (or `pip install '.[extras]'` if you use zsh).
+    - The script saves the data, models, and plots in the 'results', 'models', and 'plots' directories, respectively.
 """
 
 import argparse
-import cv2
-import numpy as np
 from pathlib import Path
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 from typing import Union
 
-MASK_START = 1  # the column index where the mask values are stored in the .txt file
-IMG_SUFFIXES = ['.jpg', '.jpeg', '.png', '.bmp']  # supported image formats
-MASK_MARGIN_RATIO = 0.15  # the ratio of the bounding box width and height to add as a margin to the mask
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+from tqdm import tqdm
 
-# model fitting parameters - the model is fitted only for the keypoints in the given range
+from stabilo.utils import setup_logger
+
 MIN_KEYPOINTS_NUM_FIT = 1000
 MAX_KEYPOINTS_NUM_FIT = 10000
+SUPPORTED_IMG_SUFFIXES = ['.jpg', '.jpeg', '.png', '.bmp']
 
+logger = setup_logger(__name__)
 
 def find_all_models(args):
     """
@@ -52,39 +58,39 @@ def find_all_models(args):
                     t_min, t_max, t_step = 0.001, 0.025, 0.001
                 threshold_settings = (t_min, t_max, t_step)
 
-                print(f"Detector: {detector}, mask: {mask_on}, CLAHE: {clahe_on}")
-                find_linear_model(args.dataset_dir, detector, mask_on, clahe_on, threshold_settings)
+                logger.info(f"Detector: {detector}, mask: {mask_on}, CLAHE: {clahe_on}")
+                find_linear_model(args.dir, detector, mask_on, clahe_on, threshold_settings, args.mask_start_idx)
 
-
-def find_linear_model(dataset_dir: Path, detector_name: str, mask_on: bool, clahe_on: bool, threshold_settings: tuple):
+def find_linear_model(dir: Path, detector_name: str, mask_on: bool, clahe_on: bool, threshold_settings: tuple, mask_start_idx: int):
     """
     Find the linear model for the given data.
-    
+
     Parameters:
-    - dataset_dir (Path): Path to the directory containing the dataset
+    - dir (Path): Path to the directory containing the dataset
     - detector_name (str): Name of the detector
     - mask_on (bool): Whether the mask was used
     - clahe_on (bool): Whether CLAHE was used
     - threshold_settings (tuple): (threshold_min, threshold_max, threshold_step)
+    - mask_start_idx (int): Start column index for bounding boxes in the mask file
     """
     threshold_min, threshold_max, threshold_step = threshold_settings
 
-    scenes_path = [s for s in dataset_dir.iterdir() if s.is_file() and s.suffix in IMG_SUFFIXES]
+    scenes_path = [s for s in dir.iterdir() if s.is_file() and s.suffix in SUPPORTED_IMG_SUFFIXES]
 
     data = []
     for scene_filepath in tqdm(scenes_path, desc="Loading scenes...", unit="scenes", leave=False):
-        scene, mask = load_image_and_mask(scene_filepath, mask_on)
+        scene, mask = load_image_and_mask(scene_filepath, mask_on, mask_start_idx)
         if mask_on and mask is None:
             continue
         data.append((scene, mask))
 
     if len(data) == 0:
-        print(f"No scenes found or no bounding boxes found for the scenes. Skipping {detector_name} detector for {mask_on} mask and {clahe_on} CLAHE.")
+        logger.warning(f"No scenes found or no bounding boxes found for the scenes. Skipping {detector_name} detector for {mask_on} mask and {clahe_on} CLAHE.")
         return
 
     clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8)) if clahe_on else None
     thresholds = np.arange(threshold_min, threshold_max + threshold_step, threshold_step)
-    print(f"Thresholds: {thresholds}")
+    logger.info(f"Thresholds: {thresholds}")
 
     thresholds_arr, keypoints_arr = [], []
 
@@ -95,12 +101,12 @@ def find_linear_model(dataset_dir: Path, detector_name: str, mask_on: bool, clah
             detector = cv2.KAZE_create(threshold=float(threshold))
         elif detector_name.lower() == "akaze":
             detector = cv2.AKAZE_create(threshold=float(threshold))
-    
+
         keypoints_in_scene = [find_keypoints_for_threshold(detector, scene, mask, clahe) for scene, mask in data]
 
         keypoints_arr.append(np.mean(keypoints_in_scene))
         thresholds_arr.append(threshold)
-    
+
     keypoints_arr = np.array(keypoints_arr)
     thresholds_arr = np.array(thresholds_arr)
 
@@ -115,20 +121,19 @@ def find_linear_model(dataset_dir: Path, detector_name: str, mask_on: bool, clah
     model = fit_model(thresholds_arr, keypoints_arr)
 
     save_model(model, detector_name, mask_on, clahe_on)
-    
-    plot_and_save(thresholds_arr, keypoints_arr, model, detector_name, mask_on, clahe_on)
 
+    plot_and_save(thresholds_arr, keypoints_arr, model, detector_name, mask_on, clahe_on)
 
 def find_keypoints_for_threshold(detector, scene: np.ndarray, mask: Union[np.ndarray, None] = None, clahe: Union[cv2.CLAHE, None] = None) -> int:
     """
     Find the number of keypoints for the given threshold value.
-    
+
     Parameters:
     - detector: cv2.FeatureDetector - Detector to use
     - scene (np.ndarray): Scene to find keypoints in
     - mask (Union[np.ndarray, None]): Mask to use
     - clahe (Union[cv2.CLAHE, None]): CLAHE object to use or None
-    
+
     Returns:
     - keypoints_num (int): Number of keypoints found
     """
@@ -138,15 +143,15 @@ def find_keypoints_for_threshold(detector, scene: np.ndarray, mask: Union[np.nda
     kpts = detector.detectAndCompute(scene, mask)[0]
     return len(kpts)
 
-
-def load_image_and_mask(scene_path: Path, mask_on: bool) -> tuple[np.ndarray, Union[np.ndarray, None]]:
+def load_image_and_mask(scene_path: Path, mask_on: bool, mask_start_idx: int) -> tuple[np.ndarray, Union[np.ndarray, None]]:
     """
     Load the scene and the bounding boxes.
-    
+
     Parameters:
     - scene_path (Path): Path to the scene
     - mask_on (bool): Whether the mask should be used
-    
+    - mask_start_idx (int): Start column index for bounding boxes in the mask file
+
     Returns:
     - scene (np.ndarray): Scene
     - mask (Union[np.ndarray, None]): Mask or None
@@ -158,7 +163,7 @@ def load_image_and_mask(scene_path: Path, mask_on: bool) -> tuple[np.ndarray, Un
         boxes_path = scene_path.with_suffix('.txt')
         if boxes_path.exists():
             boxes = np.loadtxt(str(boxes_path), delimiter=' ')
-            boxes = boxes[:, MASK_START:MASK_START + 4]
+            boxes = boxes[:, mask_start_idx:mask_start_idx + 4]
 
             h, w = scene.shape[:2]
 
@@ -170,20 +175,20 @@ def load_image_and_mask(scene_path: Path, mask_on: bool) -> tuple[np.ndarray, Un
 
             mask = create_mask(boxes, w, h)
         else:
-            print(f"No bounding boxes found for {scene_path.name}")
+            logger.warning(f"No bounding boxes found for {scene_path.name}")
 
     return scene, mask
-
-
-def create_mask(boxes: np.ndarray, w: int, h: int) -> np.ndarray:
+ 
+def create_mask(boxes: np.ndarray, w: int, h: int, mask_expansion_ratio: float = 0.15) -> np.ndarray:
     """
     Create a binary mask from the bounding boxes.
-    
+
     Parameters:
     - boxes (np.ndarray): Bounding boxes
     - w (int): Width of the image
     - h (int): Height of the image
-    
+    - mask_expansion_ratio (float): Ratio by which to expand the bounding boxes
+
     Returns:
     - mask (np.ndarray): Binary mask
     """
@@ -192,8 +197,8 @@ def create_mask(boxes: np.ndarray, w: int, h: int) -> np.ndarray:
     for box in boxes:
         xc, yc, wb, hb = box
 
-        wb += wb * MASK_MARGIN_RATIO
-        hb += hb * MASK_MARGIN_RATIO
+        wb += wb * mask_expansion_ratio
+        hb += hb * mask_expansion_ratio
 
         x1 = max(0, min(w, int(xc - wb / 2)))
         y1 = max(0, min(h, int(yc - hb / 2)))
@@ -204,27 +209,25 @@ def create_mask(boxes: np.ndarray, w: int, h: int) -> np.ndarray:
 
     return mask
 
-
 def fit_model(thresholds_arr: np.ndarray, keypoints_arr: np.ndarray) -> np.ndarray:
     """
     Fit the linear model to the given data.
-    
+
     Parameters:
     - thresholds_arr (np.ndarray): Threshold values
     - keypoints_arr (np.ndarray): Number of keypoints for each threshold/scene value
-    
+
     Returns:
     - model (np.ndarray): Coefficients of the linear model
     """
     model = np.polyfit(keypoints_arr, thresholds_arr, 1)
-    print(f"Model: {model}")
+    logger.info(f"Model: {model}")
     return model
-
 
 def save_data(thresholds_arr: np.ndarray, keypoints_arr: np.ndarray, detector_name: str, mask_on: bool, clahe_on: bool, raw_data: bool):
     """
     Save the data to a file.
-    
+
     Parameters:
     - thresholds_arr (np.ndarray): Threshold values
     - keypoints_arr (np.ndarray): Number of keypoints for each threshold/scene value
@@ -240,12 +243,12 @@ def save_data(thresholds_arr: np.ndarray, keypoints_arr: np.ndarray, detector_na
     filepath = data_dir / filename
 
     np.savetxt(str(filepath), np.column_stack((thresholds_arr, keypoints_arr)), delimiter=',', header="threshold, avg_num_keypoints", comments='')
-
+    logger.info(f"Data saved to {filepath}")
 
 def save_model(model: np.ndarray, detector_name: str, mask_on: bool, clahe_on: bool):
     """
     Save the model to a file.
-    
+
     Parameters:
     - model (np.ndarray): Coefficients of the linear model
     - detector_name (str): Name of the detector
@@ -259,12 +262,12 @@ def save_model(model: np.ndarray, detector_name: str, mask_on: bool, clahe_on: b
     filepath = model_dir / filename
 
     np.savetxt(str(filepath), model)
-
+    logger.info(f"Model saved to {filepath}")
 
 def plot_and_save(thresholds_arr: np.ndarray, keypoints_arr: np.ndarray, model: np.ndarray, detector_name: str, mask_on: bool, clahe_on: bool):
     """
     Plot the data and save the plot to a file.
-    
+
     Parameters:
     - thresholds_arr (np.ndarray): Threshold values
     - keypoints_arr (np.ndarray): Number of keypoints for each threshold/scene value
@@ -291,18 +294,18 @@ def plot_and_save(thresholds_arr: np.ndarray, keypoints_arr: np.ndarray, model: 
     plt.savefig(filepath)
     plt.close()
 
-
 def parse_args() -> argparse.Namespace:
     """
     Parse the command line arguments.
     """
     parser = argparse.ArgumentParser(description="Find brisk, kaze, or akaze threshold models for the given data")
-    parser.add_argument("--dataset-dir", "-dir", type=Path, default=Path('scenes'), help="Directory containing the dataset")
-    parser.add_argument("--detectors", "-d", type=str, nargs='+', default=['brisk', 'kaze', 'akaze'], help="Detectors to consider [default: brisk, kaze, akaze]") 
-    parser.add_argument("--mask-use", "-m", type=bool, nargs='+', default=[True, False], help="Whether to use the mask [default: True False]")
-    parser.add_argument("--clahe-use", "-c", type=bool, nargs='+', default=[True, False], help="Whether to use CLAHE [default: True False]")
-    return parser.parse_args()
+    parser.add_argument("dir", type=Path, default=Path('scenes'), help="Directory containing the dataset")
+    parser.add_argument("--detectors", "-d", type=str, nargs='+', default=['brisk', 'kaze', 'akaze'], help="Detectors to consider")
+    parser.add_argument("--mask-use", "-m", type=bool, nargs='+', default=[True, False], help="Whether to use the mask")
+    parser.add_argument("--clahe-use", "-c", type=bool, nargs='+', default=[True, False], help="Whether to use CLAHE")
+    parser.add_argument("--mask-start-idx", "-msi", type=int, default=2, help="start column index for bbox in mask file")
 
+    return parser.parse_args()
 
 if __name__ == "__main__":
     find_all_models(parse_args())
