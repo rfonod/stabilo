@@ -88,11 +88,3 @@ venv.bak/
 # Google Drive related
 .tmp.driveupload
 .tmp.drivedownload
-
-# Data
-/data
-*.mp4
-
-# Misc
-TODOs.txt
-
