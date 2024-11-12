@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
 # Author: Robert Fonod (robert.fonod@ieee.org)
 
-import sys
-import yaml
-import time
-import numpy as np
 import logging
+import sys
+import time
+
+import cv2
+import numpy as np
+import yaml
+
 
 def setup_logger(name: str, log_file: str = None, level: int = logging.INFO) -> logging.Logger:
     """
@@ -41,7 +44,6 @@ def timer(profiling: bool = False):
         return wrapper
     return decorator
 
-
 def load_config(cfg_filepath: str, logger: logging.Logger = None) -> dict:
     """
     Load the configuration file
@@ -59,7 +61,7 @@ def xywh2four(boxes: np.ndarray) -> np.ndarray:
     """
     Convert bounding boxes from [xc, yc, w, h] to four point format [x1, y1, x2, y2, x3, y3, x4, y4].
     """
-    x_c, y_c, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+    x_c, y_c, w, h = boxes.T
 
     x1 = x_c - 0.5 * w
     y1 = y_c - 0.5 * h
@@ -74,15 +76,22 @@ def xywh2four(boxes: np.ndarray) -> np.ndarray:
 
 def four2xywh(boxes: np.ndarray) -> np.ndarray:
     """
-    Convert bounding boxes from four point format [x1, y1, x2, y2, x3, y3, x4, y4] to [xc, yc, w, h].
-    """ 
-    x1, y1, x2, y2, x3, y3, x4, y4 = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3], boxes[:, 4], boxes[:, 5], boxes[:, 6], boxes[:, 7]
+    Convert bounding boxes from any four-point format [x1, y1, x2, y2, x3, y3, x4, y4]
+    to YOLO format [xc, yc, w, h], robust to any point order and rotation.
+    """
+    points = boxes.reshape(-1, 4, 2)
 
-    x_c = 0.25 * (x1 + x2 + x3 + x4)
-    y_c = 0.25 * (y1 + y2 + y3 + y4)
-    w = 0.5 * (x2 - x1 + x3 - x4)
-    h = 0.5 * (y3 - y2 + y4 - y1)
-    
+    x_min = np.min(points[:, :, 0], axis=1)
+    x_max = np.max(points[:, :, 0], axis=1)
+    y_min = np.min(points[:, :, 1], axis=1)
+    y_max = np.max(points[:, :, 1], axis=1)
+
+    x_c = (x_min + x_max) / 2
+    y_c = (y_min + y_max) / 2
+
+    w = x_max - x_min
+    h = y_max - y_min
+
     return np.column_stack((x_c, y_c, w, h))
 
 def detect_delimiter(filepath: str, lines_to_check: int = 5) -> str:
@@ -98,6 +107,6 @@ def detect_delimiter(filepath: str, lines_to_check: int = 5) -> str:
             delimiters[','] += line.count(',')
             delimiters[' '] += line.count(' ')
             delimiters['\t'] += line.count('\t')
-            
+
     return max(delimiters, key=delimiters.get)
 
