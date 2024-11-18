@@ -1,3 +1,21 @@
+# ==============================================================
+# Stabilo - MIT License
+# ==============================================================
+# Overview:
+# This pyproject.toml file configures the build system and 
+# project metadata for the Stabilo package. 
+#
+# Installation:
+# To install the Stabilo package, use the following command:
+#   pip install stabilo
+#
+# For development purposes, enabling real-time updates without 
+# reinstallation, use one of the following commands:
+#   pip install -e .[dev]
+#   pip install -e '.[dev]'  (for zsh shells)
+#
+# ==============================================================
+
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -5,7 +23,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "stabilo"
 dynamic = ["version"]
-description = "Reference frame video stabilization with optional user-provided masks."
+description = "Stabilizes video or extracted trajectories with respect to a selected reference frame in the video, with optional user-provided masks."
 authors = [
     { name = "Robert Fonod", email = "robert.fonod@ieee.org" },
 ]
@@ -14,13 +32,20 @@ license = { file = "LICENSE" }
 requires-python = ">=3.9"
 keywords = ["stabilo", "video-stabilization", "object-stabilization", "mask", "reference-frame", "computer-vision"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
-    "Topic :: Software Development",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering",
+    "Topic :: Software Development",
+    "Topic :: Multimedia :: Video",
 ]
 
 dependencies = [
@@ -47,13 +72,15 @@ package-data = { "stabilo" = ["**/*.yaml", "**/*.txt"] }
 version = { attr = "stabilo.__version__" }
 
 [project.urls]
-homepage = "https://github.com/rfonod/stabilo/"
-repository = "https://github.com/rfonod/stabilo/"
-issues = "https://github.com/rfonod/stabilo/issues/"
-releases = "https://github.com/rfonod/stabilo/releases"
+Homepage = "https://github.com/rfonod/stabilo/"
+Repository = "https://github.com/rfonod/stabilo/"
+Changelog = "https://github.com/rfonod/stabilo/releases"
+Issues = "https://github.com/rfonod/stabilo/issues/"
 
 [tool.ruff]
 line-length = 120
+
+[tool.ruff.lint]
 select = ['E', 'F', 'W', 'A', "B", 'PLC', 'PLE', 'PLW', 'I']
 
 [tool.ruff.format]

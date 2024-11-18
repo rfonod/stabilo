@@ -1,10 +1,10 @@
 # Stabilo
 
-[![DOI](https://zenodo.org/badge/816993640.svg)](https://zenodo.org/doi/10.5281/zenodo.12117092) ![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT) ![GitHub](https://img.shields.io/badge/Development-Active-brightgreen)
+[![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![DOI](https://zenodo.org/badge/816993640.svg)](https://zenodo.org/doi/10.5281/zenodo.12117092) [![Downloads](https://img.shields.io/pypi/dm/stabilo)](https://pypistats.org/packages/stabilo) [![Development Status](https://img.shields.io/badge/development-active-brightgreen)](https://github.com/rfonod/stabilo)
 
 **Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
 
-![Stabilization Visualization GIF](assets/stabilization_visualization.gif)
+![Stabilization Visualization GIF](https://raw.githubusercontent.com/rfonod/stabilo/main/assets/stabilization_visualization.gif?raw=True)
 
 ## Features
 
@@ -20,7 +20,6 @@
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
-- **Deployment to PyPI**: Publication of the package on PyPI to facilitate installation and distribution.
 - **Unit Tests**: Comprehensive unit test suite to ensure package stability and reliability.
 - **Different Mask Types**: Inclusion of additional mask types (e.g., polygonal, circular) for enhanced precision in stabilization.
 - **GPU Acceleration**: Integration of GPU acceleration to improve processing speed.
@@ -40,16 +39,10 @@ conda activate stabilo
 Then, install the stabilo library using one of the following options:
 
 ### Option 1: Install from PyPI
-You can install the package from PyPI (not available yet):
-
-<strike>
-
+You can install the package from PyPI using pip:
 ```sh
 pip install stabilo
 ```
-
-</strike>
-
 
 ### Option 2: Install from Source
 You can install the package directly from the repository:
@@ -59,7 +52,7 @@ pip install git+https://github.com/rfonod/stabilo.git
 
 ### Option 3: Install from Local Source
 
-Clone the repository and install the package:
+You can also clone the repository and install the package from the local source:
 
 ```sh
 git clone https://github.com/rfonod/stabilo.git
@@ -132,7 +125,7 @@ If you use this project in your academic research, commercial products, or any p
 @software{fonod2024stabilo,
 author = {Fonod, Robert},
 license = {MIT},
-month = jun,
+month = nov,
 title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
 url = {https://github.com/rfonod/stabilo},
 doi = {10.5281/zenodo.12117092},
