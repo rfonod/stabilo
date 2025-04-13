@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+# Author: Robert Fonod (robert.fonod@ieee.org)
+
 import cv2
 import numpy as np
 import pytest

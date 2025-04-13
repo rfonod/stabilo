@@ -10,9 +10,11 @@
 #   pip install stabilo
 #
 # For development purposes, enabling real-time updates without 
-# reinstallation, use one of the following commands:
+# reinstallation, clone the repository and install the package
+# in editable mode with the following command:
 #   pip install -e .[dev]
-#   pip install -e '.[dev]'  (for zsh shells)
+# or for zsh shell:
+#   pip install -e '.[dev]'
 #
 # ==============================================================
 
@@ -61,6 +63,7 @@ extras = [
 ]
 dev = [
     "pytest>=7.0.0",
+    "ruff>=0.11.0",
     "matplotlib>=3.5.0"
 ]
 
@@ -86,3 +89,10 @@ select = ['E', 'F', 'W', 'A', "B", 'PLC', 'PLE', 'PLW', 'I']
 [tool.ruff.format]
 docstring-code-format = true
 quote-style = "preserve"
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra"
+testpaths = [
+    "tests",
+]
