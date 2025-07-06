@@ -130,7 +130,7 @@ If you use **Stabilo** in your research, software, or product, please cite the f
 
 ## Contributing
 
-Contributions are welcome! If you encounter any issues or have suggestions for improvements, please open a [GitHub Issue](https://github.com/rfonod/stabilo/issues) or submit a pull request.
+Contributions from the community are welcome! If you encounter any issues or have suggestions for improvements, please open a [GitHub Issue](https://github.com/rfonod/stabilo/issues) or submit a pull request.
 
 ## License
 
