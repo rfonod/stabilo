@@ -2,7 +2,7 @@
 
 [![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](https://www.python.org/) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![Development Status](https://img.shields.io/badge/development-active-brightgreen)](https://github.com/rfonod/stabilo) [![Open Access](https://img.shields.io/badge/Journal-10.1016%2Fj.trc.2025.105205-blue)](https://doi.org/10.1016/j.trc.2025.105205) [![arXiv](https://img.shields.io/badge/arXiv-2411.02136-b31b1b.svg)](https://arxiv.org/abs/2411.02136) [![Archived Code](https://img.shields.io/badge/Zenodo-Software%20Archive-blue)](https://zenodo.org/doi/10.5281/zenodo.12117092) ![PyPi - Total Downloads](https://img.shields.io/pepy/dt/stabilo?label=total%20downloads) ![PyPI - Downloads per Month](https://img.shields.io/pypi/dm/stabilo?color=%234c1)
 
-**Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. For systematic evaluation and hyperparameter tuning, the companion tool [stabilo-optimize](https://github.com/rfonod/stabilo-optimize) 🎯 provides a dedicated benchmarking framework. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
+**Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [Geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. For systematic evaluation and hyperparameter tuning, the companion tool [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 provides a dedicated benchmarking framework. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
 
 ![Stabilization Visualization GIF](https://raw.githubusercontent.com/rfonod/stabilo/main/assets/stabilization_visualization.gif?raw=True)
 
@@ -10,18 +10,18 @@
 
 - **Video Stabilization**: Align (warp) all video frames to a custom (anchor) reference frame using homography or affine transformations.
 - **Trajectory Stabilization**: Transform object trajectories (e.g., bounding boxes) to a common fixed reference frame using homography or affine transformations.
-- **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization.
+- **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization, supporting both axis-aligned and oriented bounding boxes (OBBs).
 - **Wide Range of Algorithms**: Includes support for various feature detectors (ORB, SIFT, RSIFT, BRISK, KAZE, AKAZE), matchers (BF, FLANN), RANSAC algorithms (MAGSAC++, DEGENSAC, ...), transformation types, and pre-processing options.
 - **Customizable Parameters**: Fine-tune the stabilization by adjusting parameters such as the number of keypoints, RANSAC parameters, matching thresholds, downsampling factors, etc..
 - **Visualization Tools**: Generate visualizations of the stabilization process, with frame-by-frame comparisons and trajectory transformations (see the above animation).
 - **Threshold Analysis**: Analyze the relationship between detection thresholds and keypoint counts for BRISK, KAZE, and AKAZE to fairly benchmark with different detectors.
-- **Benchmarking and Optimization**: Fine-tune stabilization parameters with [stabilo-optimize](https://github.com/rfonod/stabilo-optimize) 🎯, which provides ground truth-free evaluation using random perturbations.
+- **Benchmarking and Optimization**: Fine-tune stabilization parameters with [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯, which provides ground truth-free evaluation using random perturbations.
 
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
 - **Unit Tests**: Comprehensive unit test suite to ensure package stability and reliability.
-- **Different Mask Types**: Inclusion of additional mask types (e.g., polygonal, circular) for enhanced precision in stabilization.
+- **Additional Mask Types**: Inclusion of additional mask types (e.g., polygonal, circular) for enhanced precision in stabilization.
 - **GPU Acceleration**: Integration of GPU acceleration to improve processing speed.
 - **Documentation**: Detailed documentation covering the package’s functionality and usage.
 
@@ -80,16 +80,40 @@ cur_point = np.array([x, y, 1])
 ref_point = stabilizer.get_cur_trans_matrix() @ cur_point
 ```
 
+### Bounding Box Formats
+
+Stabilo supports multiple bounding box formats for masks and transformations:
+
+- **`xywh`**: Axis-aligned boxes `[x_center, y_center, width, height]`
+- **`xywha`**: Oriented bounding boxes `[x_center, y_center, width, height, angle_degrees]`
+- **`four`**: Four corner points `[x1, y1, x2, y2, x3, y3, x4, y4]` (auto-detects if rotated)
+
+```python
+import numpy as np
+
+# Example with oriented bounding boxes (OBBs)
+obb_boxes = np.array([
+    [100, 150, 50, 30, 45],  # Rotated 45 degrees
+    [200, 200, 60, 40, 90],  # Rotated 90 degrees
+])
+
+stabilizer.set_ref_frame(ref_frame, obb_boxes, box_format='xywha')
+stabilizer.stabilize(cur_frame, cur_boxes, box_format='xywha')
+
+# Transform boxes and get result in different format
+transformed = stabilizer.transform_cur_boxes(out_box_format='four')
+```
+
 ## Utility Scripts
 
 Utility scripts are provided to demonstrate the functionality of the Stabilo package. These scripts can be found in the [`scripts`](./scripts/) directory and are briefly documented in the [scripts README](./scripts/README.md).
 
-#### Stabilization Examples
+### Stabilization Examples
 
 - `stabilize_video.py`: Implements video stabilization relative to a reference frame.
 - `stabilize_boxes.py`: Implements object trajectory stabilization relative to a reference frame.
 
-#### Threshold Analysis
+### Threshold Analysis
 
 - `find_threshold_models.py`: Computes regression models between detection thresholds and average keypoint counts for BRISK, KAZE, and AKAZE feature detectors.
 
@@ -119,11 +143,11 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2025stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = apr,
+      month = nov,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.0.1},
+      version = {1.1.0},
       year = {2025}
     }
     ```

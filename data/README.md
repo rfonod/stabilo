@@ -15,11 +15,15 @@ The video file provided in this repository is a cut version of the original dron
 - **[video_track.mp4](./video_track.mp4)**: Visualization of the original BB tracks and the stabilized BB tracks. The original BB tracks are shown in red, while the stabilized BB tracks are shown in green.
 
 ### Commands Used
+
 To re-create `video_stab.mp4` and `video_viz.mp4`, run the following command from the root of the repository:
+
 ```sh
 python scripts/stabilize_video.py data/video.mp4 -s -sv
 ```
+
 To re-create `video_stab.txt` and `video_track.mp4`, run the following command from the root of the repository:
+
 ```sh
 python scripts/stabilize_boxes.py data/video.mp4 -s -sv
 ```

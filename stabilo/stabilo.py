@@ -37,7 +37,7 @@ from typing import Union
 import cv2
 import numpy as np
 
-from .utils import four2xywh, load_config, setup_logger, timer, xywh2four
+from .utils import four2xywh, is_box_rotated, load_config, setup_logger, timer, xywh2four, xywha2four
 
 # Configure logging
 logger = setup_logger(__name__)
@@ -65,15 +65,15 @@ class Stabilizer:
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
     VALID_RANSAC_METHODS_DICT = {
-        'cv2.LMEDS': cv2.LMEDS,                  # 4 - LMEDS
-        'cv2.RANSAC': cv2.RANSAC,                # 8 - RANSAC
-        'cv2.RHO': cv2.RHO,                      # 16 - RHO
-        'cv2.USAC_DEFAULT': cv2.USAC_DEFAULT,    # 32 - DEGENSAC
+        'cv2.LMEDS': cv2.LMEDS,  # 4 - LMEDS
+        'cv2.RANSAC': cv2.RANSAC,  # 8 - RANSAC
+        'cv2.RHO': cv2.RHO,  # 16 - RHO
+        'cv2.USAC_DEFAULT': cv2.USAC_DEFAULT,  # 32 - DEGENSAC
         'cv2.USAC_PARALLEL': cv2.USAC_PARALLEL,  # 33 - DEGENSAC (with different parameters)
-        'cv2.USAC_FAST': cv2.USAC_FAST,          # 35 - LO-RANSAC
+        'cv2.USAC_FAST': cv2.USAC_FAST,  # 35 - LO-RANSAC
         'cv2.USAC_ACCURATE': cv2.USAC_ACCURATE,  # 36 - GC-RANSAC
-        'cv2.USAC_PROSAC': cv2.USAC_PROSAC,      # 37 - PROSAC
-        'cv2.USAC_MAGSAC': cv2.USAC_MAGSAC       # 38 - MAGSAC++
+        'cv2.USAC_PROSAC': cv2.USAC_PROSAC,  # 37 - PROSAC
+        'cv2.USAC_MAGSAC': cv2.USAC_MAGSAC,  # 38 - MAGSAC++
     }
 
     def __init__(self, **kwargs):
@@ -162,7 +162,9 @@ class Stabilizer:
         """
         return (
             cv2.cuda.ORB_create(self.max_features) if self.gpu else cv2.ORB_create(self.max_features),
-            cv2.cuda.ORB_create(round(self.ref_multiplier * self.max_features)) if self.gpu else cv2.ORB_create(round(self.ref_multiplier * self.max_features))
+            cv2.cuda.ORB_create(round(self.ref_multiplier * self.max_features))
+            if self.gpu
+            else cv2.ORB_create(round(self.ref_multiplier * self.max_features)),
         )
 
     def _create_sift_detectors(self):
@@ -170,8 +172,12 @@ class Stabilizer:
         Create SIFT detectors and descriptor extractors.
         """
         return (
-            cv2.cuda.SIFT_create(self.max_features) if self.gpu else cv2.SIFT_create(self.max_features), # (enable_precise_upscale=True)
-            cv2.cuda.SIFT_create(round(self.ref_multiplier * self.max_features)) if self.gpu else cv2.SIFT_create(round(self.ref_multiplier * self.max_features))
+            cv2.cuda.SIFT_create(self.max_features)
+            if self.gpu
+            else cv2.SIFT_create(self.max_features),  # (enable_precise_upscale=True)
+            cv2.cuda.SIFT_create(round(self.ref_multiplier * self.max_features))
+            if self.gpu
+            else cv2.SIFT_create(round(self.ref_multiplier * self.max_features)),
         )
 
     def _create_brisk_detectors(self):
@@ -180,8 +186,12 @@ class Stabilizer:
         """
         threshold_cur, threshold_ref = self._get_thresholds()
         return (
-            cv2.cuda.BRISK.create(thresh=round(threshold_cur)) if self.gpu else cv2.BRISK_create(thresh=round(threshold_cur)),
-            cv2.cuda.BRISK.create(thresh=round(threshold_ref)) if self.gpu else cv2.BRISK_create(thresh=round(threshold_ref))
+            cv2.cuda.BRISK.create(thresh=round(threshold_cur))
+            if self.gpu
+            else cv2.BRISK_create(thresh=round(threshold_cur)),
+            cv2.cuda.BRISK.create(thresh=round(threshold_ref))
+            if self.gpu
+            else cv2.BRISK_create(thresh=round(threshold_ref)),
         )
 
     def _create_kaze_detectors(self):
@@ -191,7 +201,7 @@ class Stabilizer:
         threshold_cur, threshold_ref = self._get_thresholds()
         return (
             cv2.cuda.KAZE_create(threshold=threshold_cur) if self.gpu else cv2.KAZE_create(threshold=threshold_cur),
-            cv2.cuda.KAZE_create(threshold=threshold_ref) if self.gpu else cv2.KAZE_create(threshold=threshold_ref)
+            cv2.cuda.KAZE_create(threshold=threshold_ref) if self.gpu else cv2.KAZE_create(threshold=threshold_ref),
         )
 
     def _create_akaze_detectors(self):
@@ -201,7 +211,7 @@ class Stabilizer:
         threshold_cur, threshold_ref = self._get_thresholds()
         return (
             cv2.cuda.AKAZE_create(threshold=threshold_cur) if self.gpu else cv2.AKAZE_create(threshold=threshold_cur),
-            cv2.cuda.AKAZE_create(threshold=threshold_ref) if self.gpu else cv2.AKAZE_create(threshold=threshold_ref)
+            cv2.cuda.AKAZE_create(threshold=threshold_ref) if self.gpu else cv2.AKAZE_create(threshold=threshold_ref),
         )
 
     def _get_thresholds(self):
@@ -209,15 +219,25 @@ class Stabilizer:
         Get thresholds for BRISK, KAZE, and AKAZE based on precomputed models.
         """
         detector_name = self.detector_name.upper()
-        threshold_model_filepath = ROOT / 'thresholds' / 'models' / f'{detector_name}' / f'model_mask_{self.mask_use}_clahe_{self.clahe}.txt'
+        threshold_model_filepath = (
+            ROOT / 'thresholds' / 'models' / f'{detector_name}' / f'model_mask_{self.mask_use}_clahe_{self.clahe}.txt'
+        )
         if threshold_model_filepath.exists():
             model = np.loadtxt(str(threshold_model_filepath))
             threshold_cur = model[1] + model[0] * self.max_features
             threshold_ref = model[1] + model[0] * self.max_features * self.ref_multiplier
             if not self.benchmark:
-                logger.info(f"Using {detector_name} with threshold {threshold_ref} for the reference frame and {threshold_cur} for the current frame.")
+                logger.info(
+                    f"Using {detector_name} with threshold {threshold_ref} for the reference frame and {threshold_cur} for the current frame."
+                )
         else:
-            threshold_cur = self.brisk_threshold if detector_name == 'BRISK' else self.kaze_threshold if detector_name == 'KAZE' else self.akaze_threshold
+            threshold_cur = (
+                self.brisk_threshold
+                if detector_name == 'BRISK'
+                else self.kaze_threshold
+                if detector_name == 'KAZE'
+                else self.akaze_threshold
+            )
             threshold_ref = threshold_cur
             if not self.benchmark:
                 logger.warning(f"No threshold analysis for {detector_name}. Using default threshold.")
@@ -228,7 +248,7 @@ class Stabilizer:
         Get the norm type based on the detector name.
         """
         if self.detector_name in ["orb", "brisk", "akaze"]:
-            return cv2.NORM_HAMMING # N.B.: if ORB is using WTA_K == 3 or 4, cv.NORM_HAMMING2 should be used
+            return cv2.NORM_HAMMING  # N.B.: if ORB is using WTA_K == 3 or 4, cv.NORM_HAMMING2 should be used
         elif self.detector_name in ["sift", "rsift", "kaze"]:
             return cv2.NORM_L2
 
@@ -245,7 +265,13 @@ class Stabilizer:
         """
         Create a brute-force matcher.
         """
-        return cv2.cuda.DescriptorMatcher_createBFMatcher(self.norm_type, crossCheck=(True,False)[self.filter_type=='ratio']) if self.gpu else cv2.BFMatcher(self.norm_type, crossCheck=(True,False)[self.filter_type=='ratio'])
+        return (
+            cv2.cuda.DescriptorMatcher_createBFMatcher(
+                self.norm_type, crossCheck=(True, False)[self.filter_type == 'ratio']
+            )
+            if self.gpu
+            else cv2.BFMatcher(self.norm_type, crossCheck=(True, False)[self.filter_type == 'ratio'])
+        )
 
     def _create_flann_matcher(self):
         """
@@ -256,7 +282,11 @@ class Stabilizer:
         elif self.norm_type == cv2.NORM_L2:
             index_params = dict(algorithm=0, trees=5)
         search_params = dict(checks=100)
-        return cv2.cuda.DescriptorMatcher_createFlannBasedMatcher(index_params, search_params) if self.gpu else cv2.FlannBasedMatcher(index_params, search_params)
+        return (
+            cv2.cuda.DescriptorMatcher_createFlannBasedMatcher(index_params, search_params)
+            if self.gpu
+            else cv2.FlannBasedMatcher(index_params, search_params)
+        )
 
     def _create_transformer(self):
         """
@@ -272,7 +302,11 @@ class Stabilizer:
         Create helper objects for grayscale conversion, CLAHE, and resizing.
         """
         self.grayscale_converter = cv2.cuda.cvtColor if self.gpu else cv2.cvtColor
-        self.claher = cv2.cuda.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8)) if self.gpu else cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+        self.claher = (
+            cv2.cuda.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+            if self.gpu
+            else cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
+        )
         self.resizer = cv2.cuda.resize if self.gpu else cv2.resize
 
     @timer(PROFILING)
@@ -301,7 +335,9 @@ class Stabilizer:
                 self.cur_pts = []
             self.calculate_transformation_matrix()
 
-    def process_frame(self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh', is_reference: bool = False) -> bool:
+    def process_frame(
+        self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh', is_reference: bool = False
+    ) -> bool:
         """
         Process the given frame and bounding boxes.
         """
@@ -311,9 +347,11 @@ class Stabilizer:
 
         if self.mask_use:
             if boxes is None:
-                logger.warning(f'Mask is set to be used, but no bounding boxes were provided for the {"reference" if is_reference else "current"} frame.')
+                logger.warning(
+                    f'Mask is set to be used, but no bounding boxes were provided for the {"reference" if is_reference else "current"} frame.'
+                )
         else:
-            boxes = None # if mask is not to be used, ignore the bounding boxes even if provided
+            boxes = None  # if mask is not to be used, ignore the bounding boxes even if provided
 
         if is_reference:
             self.h, self.w = frame.shape[:2]
@@ -332,14 +370,20 @@ class Stabilizer:
         if self.viz:
             if is_reference:
                 self.ref_mask = mask
-                self.ref_pts = np.array([ref_kpt.pt for ref_kpt in self.ref_kpts], dtype=np.float32).reshape(-1, 2) if self.ref_kpts is not None else []
+                self.ref_pts = (
+                    np.array([ref_kpt.pt for ref_kpt in self.ref_kpts], dtype=np.float32).reshape(-1, 2)
+                    if self.ref_kpts is not None
+                    else []
+                )
             else:
                 self.cur_mask = mask
 
         return True
 
     @timer(PROFILING)
-    def get_features_and_descriptors(self, frame: np.ndarray, mask: np.ndarray = None, ref_frame: bool = False) -> tuple:
+    def get_features_and_descriptors(
+        self, frame: np.ndarray, mask: np.ndarray = None, ref_frame: bool = False
+    ) -> tuple:
         """
         Get the features and descriptors for the given frame.
         """
@@ -358,7 +402,11 @@ class Stabilizer:
 
         if self.downsample_ratio != 1.0:
             frame = self.resizer(frame, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
-            mask = self.resizer(mask, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio) if mask is not None else None
+            mask = (
+                self.resizer(mask, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
+                if mask is not None
+                else None
+            )
 
         try:
             kpts, desc = (self.detector_ref if ref_frame else self.detector_cur).detectAndCompute(frame, mask)
@@ -367,7 +415,7 @@ class Stabilizer:
             return None, None, None
 
         if self.detector_name == 'rsift':
-            desc /= (desc.sum(axis=1, keepdims=True) + 1e-8)
+            desc /= desc.sum(axis=1, keepdims=True) + 1e-8
             desc = np.sqrt(desc)
 
         if self.downsample_ratio != 1.0:
@@ -405,7 +453,7 @@ class Stabilizer:
                 for pair in matches:
                     if len(pair) == 2:
                         m, n = pair
-                        if m.distance < self.filter_ratio*n.distance:
+                        if m.distance < self.filter_ratio * n.distance:
                             good_matches.append(m)
         except cv2.error as e:
             logger.error(f"Matches couldn't be found. \n Error: {e}")
@@ -423,8 +471,14 @@ class Stabilizer:
         """
         if self.ref_pts is not None and self.cur_pts is not None and len(self.ref_pts) >= 4 and len(self.cur_pts) >= 4:
             try:
-                self.cur_trans_matrix, inliers = self.transformer(self.cur_pts, self.ref_pts, maxIters=self.ransac_max_iter,
-                method=self.ransac_method, confidence=self.ransac_confidence, ransacReprojThreshold=self.ransac_epipolar_threshold)
+                self.cur_trans_matrix, inliers = self.transformer(
+                    self.cur_pts,
+                    self.ref_pts,
+                    maxIters=self.ransac_max_iter,
+                    method=self.ransac_method,
+                    confidence=self.ransac_confidence,
+                    ransacReprojThreshold=self.ransac_epipolar_threshold,
+                )
             except cv2.error as e:
                 logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
                 self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
@@ -437,7 +491,9 @@ class Stabilizer:
                     self.trans_matrix_last_known = self.cur_trans_matrix
                     inliers_count = sum(inliers.ravel().tolist())
                     if inliers_count <= self.min_inliers_match_count_warning:
-                        logger.warning(f'Only {inliers_count} inliers points were used to estimate the transformation matrix.')
+                        logger.warning(
+                            f'Only {inliers_count} inliers points were used to estimate the transformation matrix.'
+                        )
                 else:
                     logger.warning('Transformation matrix is None.')
                     self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
@@ -461,21 +517,71 @@ class Stabilizer:
     def create_binary_mask(self, boxes: np.ndarray, box_format: str) -> np.ndarray:
         """
         Create a mask from the given bounding boxes.
+        Supports both axis-aligned bounding boxes (AABBs) and oriented bounding boxes (OBBs).
+
+        Args:
+            boxes: Array of bounding boxes
+            box_format: Format of the boxes - 'xywh', 'xywha', or 'four'
+                - 'xywh': [x_center, y_center, width, height] - axis-aligned
+                - 'xywha': [x_center, y_center, width, height, angle_degrees] - oriented
+                - 'four': [x1, y1, x2, y2, x3, y3, x4, y4] - four corners (can be oriented or axis-aligned)
+
+        Returns:
+            Binary mask with 255 for regions to include and 0 for regions to exclude
         """
         if self.h is None or self.w is None:
             logger.error("Reference frame is not set.")
             sys.exit(1)
 
-        if box_format == 'four':
-            boxes = four2xywh(boxes)
-
         mask = np.full((self.h, self.w), 255, dtype=np.uint8)
-        for box in boxes:
-            xc, yc, wb, hb = box
-            wb += wb * self.mask_margin_ratio
-            hb += hb * self.mask_margin_ratio
-            x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
-            mask[max(0, y1):min(self.h, y2), max(0, x1):min(self.w, x2)] = 0
+
+        if box_format == 'xywha':
+            # Oriented bounding boxes with explicit angle
+            for box in boxes:
+                xc, yc, wb, hb, angle = box
+                # Apply margin
+                wb_margin = wb * (1 + self.mask_margin_ratio)
+                hb_margin = hb * (1 + self.mask_margin_ratio)
+                # Convert to four-point format with margin
+                box_with_margin = np.array([[xc, yc, wb_margin, hb_margin, angle]])
+                four_points = xywha2four(box_with_margin)[0]
+                # Reshape to polygon format for fillPoly
+                pts = four_points.reshape(4, 2).astype(np.int32)
+                cv2.fillPoly(mask, [pts], 0)
+
+        elif box_format == 'four':
+            # Four-point format - check if boxes are rotated
+            for box in boxes:
+                if is_box_rotated(box):
+                    # Oriented box - use polygon filling
+                    # Apply margin by scaling around center
+                    points = box.reshape(4, 2)
+                    center = points.mean(axis=0)
+                    # Scale points away from center to apply margin
+                    scale_factor = 1 + self.mask_margin_ratio
+                    points_margin = center + (points - center) * scale_factor
+                    pts = points_margin.astype(np.int32)
+                    cv2.fillPoly(mask, [pts], 0)
+                else:
+                    # Axis-aligned box - use fast rectangular masking
+                    xc, yc, wb, hb = four2xywh(box.reshape(1, -1))[0]
+                    wb += wb * self.mask_margin_ratio
+                    hb += hb * self.mask_margin_ratio
+                    x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
+                    mask[max(0, y1) : min(self.h, y2), max(0, x1) : min(self.w, x2)] = 0
+
+        elif box_format == 'xywh':
+            # Axis-aligned boxes
+            for box in boxes:
+                xc, yc, wb, hb = box
+                wb += wb * self.mask_margin_ratio
+                hb += hb * self.mask_margin_ratio
+                x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
+                mask[max(0, y1) : min(self.h, y2), max(0, x1) : min(self.w, x2)] = 0
+
+        else:
+            logger.error(f"Unsupported box format: {box_format}")
+            sys.exit(1)
 
         return mask
 
@@ -509,28 +615,61 @@ class Stabilizer:
         """
         return self.transform_boxes(self.cur_boxes, self.cur_trans_matrix, self.cur_box_format, out_box_format)
 
-    def transform_boxes(self, boxes: np.ndarray, trans_matrix: np.ndarray, in_box_format: str = 'xywh', out_box_format: str = 'xywh') -> Union[np.ndarray, None]:
+    def transform_boxes(
+        self, boxes: np.ndarray, trans_matrix: np.ndarray, in_box_format: str = 'xywh', out_box_format: str = 'xywh'
+    ) -> Union[np.ndarray, None]:
         """
         Transform the provided bounding boxes using the provided transformation matrix.
+
+        Args:
+            boxes: Input bounding boxes
+            trans_matrix: Transformation matrix (homography or affine)
+            in_box_format: Input format - 'xywh', 'xywha', or 'four'
+            out_box_format: Output format - 'xywh', 'xywha', or 'four'
+
+        Returns:
+            Transformed boxes in the requested output format
         """
         if boxes is None:
             return None
         if trans_matrix is None:
             return boxes
 
+        # Convert input format to four-point format for transformation
         if in_box_format == 'xywh':
-            boxes = xywh2four(boxes)
+            boxes_four = xywh2four(boxes)
+        elif in_box_format == 'xywha':
+            boxes_four = xywha2four(boxes)
+        elif in_box_format == 'four':
+            boxes_four = boxes
+        else:
+            logger.error(f"Unsupported input box format: {in_box_format}")
+            return boxes
 
-        boxes = np.array([boxes]).reshape(-1, 1, 2)
+        # Transform the four corner points
+        boxes_reshaped = np.array([boxes_four]).reshape(-1, 1, 2)
         if self.transformation_type == 'projective':
-            boxes = cv2.perspectiveTransform(boxes, trans_matrix)
+            boxes_transformed = cv2.perspectiveTransform(boxes_reshaped, trans_matrix)
         elif self.transformation_type == 'affine':
-            boxes = cv2.transform(boxes, trans_matrix)
+            boxes_transformed = cv2.transform(boxes_reshaped, trans_matrix)
 
+        boxes_transformed = boxes_transformed.reshape(-1, 8)
+
+        # Convert to output format
         if out_box_format == 'xywh':
-            return four2xywh(boxes.reshape(-1, 8))
+            return four2xywh(boxes_transformed)
         elif out_box_format == 'four':
-            return boxes.reshape(-1, 8)
+            return boxes_transformed
+        elif out_box_format == 'xywha':
+            # For xywha output, we need to compute angle from transformed corners
+            # This is an approximation - we compute the angle from the first two corners
+            logger.warning(
+                "Converting to 'xywha' format after transformation may lose precision for non-uniform scaling. Consider using 'four' format."
+            )
+            return self._four2xywha(boxes_transformed)
+        else:
+            logger.error(f"Unsupported output box format: {out_box_format}")
+            return boxes_transformed
 
     def get_cur_frame(self) -> Union[np.ndarray, None]:
         """
@@ -563,6 +702,42 @@ class Stabilizer:
             'mask_use': self.mask_use,
         }
 
+    def _four2xywha(self, boxes: np.ndarray) -> np.ndarray:
+        """
+        Convert boxes from four-point format to xywha format [xc, yc, w, h, angle].
+        The angle is computed from the orientation of the box.
+
+        Args:
+            boxes: Array of shape (N, 8) in format [x1, y1, x2, y2, x3, y3, x4, y4]
+
+        Returns:
+            Array of shape (N, 5) in format [xc, yc, w, h, angle_degrees]
+        """
+        points = boxes.reshape(-1, 4, 2)
+
+        # Compute center
+        x_c = points[:, :, 0].mean(axis=1)
+        y_c = points[:, :, 1].mean(axis=1)
+
+        # Compute dimensions and angle
+        # Use the first edge (p0 -> p1) to determine the orientation
+        dx = points[:, 1, 0] - points[:, 0, 0]
+        dy = points[:, 1, 1] - points[:, 0, 1]
+
+        # Compute angle in degrees
+        angle = np.degrees(np.arctan2(dy, dx))
+
+        # Compute width and height
+        # Width is the distance between p0 and p1 (or p2 and p3)
+        # Height is the distance between p1 and p2 (or p3 and p0)
+        w = np.sqrt(dx**2 + dy**2)
+
+        dx_h = points[:, 2, 0] - points[:, 1, 0]
+        dy_h = points[:, 2, 1] - points[:, 1, 1]
+        h = np.sqrt(dx_h**2 + dy_h**2)
+
+        return np.column_stack((x_c, y_c, w, h, angle))
+
     def _validate_arguments(self):
         """
         Validate the arguments provided during the initialization of the Stabilizer class.
@@ -574,9 +749,13 @@ class Stabilizer:
         if self.filter_type not in self.VALID_FILTER_TYPES:
             raise ValueError(f"Invalid filter type: {self.filter_type}. Choose from {self.VALID_FILTER_TYPES}")
         if self.transformation_type not in self.VALID_TRANSFORMATION_TYPES:
-            raise ValueError(f"Invalid transformation type: {self.transformation_type}. Choose from {self.VALID_TRANSFORMATION_TYPES}")
+            raise ValueError(
+                f"Invalid transformation type: {self.transformation_type}. Choose from {self.VALID_TRANSFORMATION_TYPES}"
+            )
         if self.ransac_method not in self.VALID_RANSAC_METHODS_DICT.values():
-            raise ValueError(f"Invalid RANSAC method: {self.ransac_method}. Choose from {self.VALID_RANSAC_METHODS_DICT.keys()}")
+            raise ValueError(
+                f"Invalid RANSAC method: {self.ransac_method}. Choose from {self.VALID_RANSAC_METHODS_DICT.keys()}"
+            )
         if not (0.0 < self.downsample_ratio <= 1.0):
             raise ValueError("Invalid downsample_ratio. It should be in the range (0.0, 1.0]")
         if not (0 < self.max_features) and isinstance(self.max_features, int):

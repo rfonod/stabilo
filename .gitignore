@@ -88,3 +88,6 @@ venv.bak/
 # Google Drive related
 .tmp.driveupload
 .tmp.drivedownload
+
+# Data
+/data-private
