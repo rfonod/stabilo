@@ -517,14 +517,17 @@ class Stabilizer:
     def create_binary_mask(self, boxes: np.ndarray, box_format: str) -> np.ndarray:
         """
         Create a mask from the given bounding boxes.
-        Supports both axis-aligned bounding boxes (AABBs) and oriented bounding boxes (OBBs).
+        Supports axis-aligned, oriented, polygonal, and circular exclusion masks.
 
         Args:
             boxes: Array of bounding boxes
-            box_format: Format of the boxes - 'xywh', 'xywha', or 'four'
+            box_format: Format of the boxes - 'xywh', 'xywha', 'four', 'polygon', or 'circle'
                 - 'xywh': [x_center, y_center, width, height] - axis-aligned
                 - 'xywha': [x_center, y_center, width, height, angle_degrees] - oriented
                 - 'four': [x1, y1, x2, y2, x3, y3, x4, y4] - four corners (can be oriented or axis-aligned)
+                - 'polygon': polygon points, either flattened [x1, y1, ..., xN, yN] per row
+                  or shape (N, 2) per polygon
+                - 'circle': [x_center, y_center, radius]
 
         Returns:
             Binary mask with 255 for regions to include and 0 for regions to exclude
@@ -579,11 +582,67 @@ class Stabilizer:
                 x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
                 mask[max(0, y1) : min(self.h, y2), max(0, x1) : min(self.w, x2)] = 0
 
+        elif box_format == 'polygon':
+            # Polygon masks (arbitrary number of vertices)
+            for points in self._normalize_polygon_masks(boxes):
+                center = points.mean(axis=0)
+                points_margin = center + (points - center) * (1 + self.mask_margin_ratio)
+                pts = np.round(points_margin).astype(np.int32)
+                cv2.fillPoly(mask, [pts], 0)
+
+        elif box_format == 'circle':
+            # Circle masks [xc, yc, radius]
+            circles = np.asarray(boxes, dtype=np.float32)
+            if circles.ndim == 1:
+                circles = circles.reshape(1, -1)
+            if circles.ndim != 2 or circles.shape[1] != 3:
+                logger.error("Circle format requires shape (N, 3) with [x_center, y_center, radius].")
+                sys.exit(1)
+            for xc, yc, radius in circles:
+                radius_margin = max(int(round(radius * (1 + self.mask_margin_ratio))), 1)
+                cv2.circle(mask, (int(round(xc)), int(round(yc))), radius_margin, 0, thickness=-1)
+
         else:
             logger.error(f"Unsupported box format: {box_format}")
             sys.exit(1)
 
         return mask
+
+    def _normalize_polygon_masks(self, polygons) -> list[np.ndarray]:
+        """
+        Normalize polygon input to a list of arrays with shape (N_vertices, 2).
+        """
+        if isinstance(polygons, np.ndarray):
+            if polygons.ndim == 1:
+                polygons = [polygons]
+            elif polygons.ndim == 2 and polygons.shape[1] == 2:
+                polygons = [polygons]
+            elif polygons.ndim == 2:
+                polygons = [row for row in polygons]
+            elif polygons.ndim == 3 and polygons.shape[2] == 2:
+                polygons = [poly for poly in polygons]
+            else:
+                logger.error("Invalid polygon input shape.")
+                sys.exit(1)
+
+        normalized_polygons = []
+        for polygon in polygons:
+            points = np.asarray(polygon, dtype=np.float32)
+            if points.ndim == 1:
+                if points.size < 6 or points.size % 2 != 0:
+                    logger.error("Polygon rows must contain at least 3 (x, y) points.")
+                    sys.exit(1)
+                points = points.reshape(-1, 2)
+            elif points.ndim != 2 or points.shape[1] != 2:
+                logger.error("Each polygon must be shape (N, 2) or flattened [x1, y1, ..., xN, yN].")
+                sys.exit(1)
+
+            if points.shape[0] < 3:
+                logger.error("Polygons must have at least 3 vertices.")
+                sys.exit(1)
+            normalized_polygons.append(points)
+
+        return normalized_polygons
 
     @timer(PROFILING)
     def warp_cur_frame(self) -> Union[np.ndarray, None]:

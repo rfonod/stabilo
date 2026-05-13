@@ -254,3 +254,53 @@ def test_stabilize_with_obb_masks(default_stabilizer, images):
     assert default_stabilizer.ref_kpts is not None
     assert default_stabilizer.cur_kpts is not None
 
+
+def test_create_binary_mask_polygon_flattened(default_stabilizer, images):
+    _, ref_frame = images
+    polygon_boxes = np.array([
+        [60, 60, 120, 60, 120, 120, 60, 120],
+        [200, 200, 260, 210, 240, 270, 190, 260],
+    ])
+
+    default_stabilizer.set_ref_frame(ref_frame)
+    mask = default_stabilizer.create_binary_mask(polygon_boxes, 'polygon')
+
+    assert mask is not None
+    assert mask.shape == (ref_frame.shape[0], ref_frame.shape[1])
+    assert mask.dtype == np.uint8
+    assert np.min(mask) == 0
+    assert np.max(mask) == 255
+
+
+def test_create_binary_mask_polygon_xy_pairs(default_stabilizer, images):
+    _, ref_frame = images
+    polygon_xy_pairs = np.array([
+        [[100, 100], [140, 100], [140, 140], [100, 140]],
+        [[300, 300], [340, 310], [320, 360], [280, 350]],
+    ], dtype=np.float32)
+
+    default_stabilizer.set_ref_frame(ref_frame)
+    mask = default_stabilizer.create_binary_mask(polygon_xy_pairs, 'polygon')
+
+    assert mask is not None
+    assert mask.shape == (ref_frame.shape[0], ref_frame.shape[1])
+    assert mask.dtype == np.uint8
+    assert np.min(mask) == 0
+    assert np.max(mask) == 255
+
+
+def test_create_binary_mask_circle(default_stabilizer, images):
+    _, ref_frame = images
+    circle_masks = np.array([
+        [120, 120, 25],
+        [360, 240, 40],
+    ])
+
+    default_stabilizer.set_ref_frame(ref_frame)
+    mask = default_stabilizer.create_binary_mask(circle_masks, 'circle')
+
+    assert mask is not None
+    assert mask.shape == (ref_frame.shape[0], ref_frame.shape[1])
+    assert mask.dtype == np.uint8
+    assert np.min(mask) == 0
+    assert np.max(mask) == 255
