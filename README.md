@@ -10,7 +10,7 @@
 
 - **Video Stabilization**: Align (warp) all video frames to a custom (anchor) reference frame using homography or affine transformations.
 - **Trajectory Stabilization**: Transform object trajectories (e.g., bounding boxes) to a common fixed reference frame using homography or affine transformations.
-- **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization, supporting both axis-aligned and oriented bounding boxes (OBBs).
+- **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization, supporting axis-aligned boxes, oriented bounding boxes (OBBs), four-point boxes, polygonal masks, and circular masks.
 - **Wide Range of Algorithms**: Includes support for various feature detectors (ORB, SIFT, RSIFT, BRISK, KAZE, AKAZE), matchers (BF, FLANN), RANSAC algorithms (MAGSAC++, DEGENSAC, ...), transformation types, and pre-processing options.
 - **Customizable Parameters**: Fine-tune the stabilization by adjusting parameters such as the number of keypoints, RANSAC parameters, matching thresholds, downsampling factors, etc..
 - **Visualization Tools**: Generate visualizations of the stabilization process, with frame-by-frame comparisons and trajectory transformations (see the above animation).
@@ -20,16 +20,35 @@
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
-- **Unit Tests**: Comprehensive unit test suite to ensure package stability and reliability.
-- **Additional Mask Types**: Inclusion of additional mask types (e.g., polygonal, circular) for enhanced precision in stabilization.
 - **GPU Acceleration**: Integration of GPU acceleration to improve processing speed.
-- **Documentation**: Detailed documentation covering the package’s functionality and usage.
+- **Bi-directional Matching**: Implementing bi-directional matching to enhance the robustness of keypoint matching.
+- **Additional Feature Detectors**: Adding support for more feature detectors and matchers to provide users with a wider range of options for stabilization.
+
+</details>
+
+<details>
+<summary><b>🔗 Related Projects</b></summary>
+
+Stabilo integrates with and complements several specialized tools:
+
+- **[Geo-trax](https://github.com/rfonod/geo-trax) 🚀** — End-to-end framework for extracting georeferenced vehicle trajectories from drone imagery. Uses Stabilo as its core stabilization engine to align video frames and vehicle tracks to a common reference frame.
+
+- **[Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯** — Benchmarking and hyperparameter optimization framework for Stabilo. Evaluates stabilization performance through ground truth-free assessment using random perturbations. Used to fine-tune Stabilo parameters.
+
+- **[HBB2OBB](https://github.com/rfonod/hbb2obb) 📦** — Converts horizontal bounding boxes to oriented bounding boxes using SAM segmentation models. Can be used alongside Stabilo when object orientation is needed for downstream analysis.
 
 </details>
 
 ## Installation
 
-It is recommended to create and activate a **Python Virtual Environment** (Python >= 3.9) first using e.g., [Miniconda3](https://docs.anaconda.com/free/miniconda/):
+It is recommended to create and activate a **Python Virtual Environment** (Python >= 3.9) first. You can use Python's built-in `venv` module:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+```
+
+Alternatively, you can use [Miniconda3](https://docs.anaconda.com/free/miniconda/):
 
 ```bash
 conda create -n stabilo python=3.11 -y
@@ -82,11 +101,13 @@ ref_point = stabilizer.get_cur_trans_matrix() @ cur_point
 
 ### Bounding Box Formats
 
-Stabilo supports multiple bounding box formats for masks and transformations:
+Stabilo supports multiple mask and bounding-box formats:
 
 - **`xywh`**: Axis-aligned boxes `[x_center, y_center, width, height]`
 - **`xywha`**: Oriented bounding boxes `[x_center, y_center, width, height, angle_degrees]`
 - **`four`**: Four corner points `[x1, y1, x2, y2, x3, y3, x4, y4]` (auto-detects if rotated)
+- **`polygon`**: Polygon points as flattened rows `[x1, y1, ..., xN, yN]` or `(N, 2)` point arrays
+- **`circle`**: Circular masks `[x_center, y_center, radius]`
 
 ```python
 import numpy as np
@@ -103,6 +124,30 @@ stabilizer.stabilize(cur_frame, cur_boxes, box_format='xywha')
 # Transform boxes and get result in different format
 transformed = stabilizer.transform_cur_boxes(out_box_format='four')
 ```
+
+### Polygon and Circular Mask Examples
+
+```python
+# Polygon mask(s)
+polygon_masks = np.array([
+    [60, 60, 120, 60, 120, 120, 60, 120],
+    [200, 200, 260, 210, 240, 270, 190, 260],
+])
+stabilizer.set_ref_frame(ref_frame, polygon_masks, box_format='polygon')
+
+# Circular mask(s)
+circle_masks = np.array([
+    [120, 120, 25],
+    [360, 240, 40],
+])
+stabilizer.stabilize(cur_frame, circle_masks, box_format='circle')
+```
+
+## Documentation
+
+For detailed package documentation, including architecture, end-to-end workflows, mask format specifications, and API behavior notes, see:
+
+- [`docs/usage.md`](./docs/usage.md)
 
 ## Utility Scripts
 
@@ -140,15 +185,15 @@ If you use **Stabilo** in your research, software, or product, please cite the f
 2. **Repository Citation:** If you reference, modify, or build upon the Stabilo software itself, please also cite the corresponding Zenodo release:
 
     ```bibtex
-    @software{fonod2025stabilo,
+    @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = nov,
+      month = apr,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.1.0},
-      year = {2025}
+      version = {1.2.0},
+      year = {2026}
     }
     ```
 

@@ -6,7 +6,7 @@ This directory contains utility scripts that demonstrate the functionality of th
 
 ### Description
 
-`stabilize_video.py` stabilizes videos using the ‘stabilo’ library. It reads a video file, stabilizes it using a reference frame stabilization method, and optionally saves the stabilized video or the visualization of the stabilization process. The stabilization is based on feature point matching between frames, followed by transformation estimation using a RANSAC-type algorithm. The script supports various feature detectors, matchers, and extensive customization through command-line options or a configuration file. It also supports CLAHE application, video downsampling, and exclusion masks (bounding boxes) for stabilization.
+`stabilize_video.py` stabilizes videos using the 'stabilo' library. It reads a video file, stabilizes it using a reference frame stabilization method, and optionally saves the stabilized video or the visualization of the stabilization process. The stabilization is based on feature point matching between frames, followed by transformation estimation using a RANSAC-type algorithm. The script supports various feature detectors, matchers, and extensive customization through command-line options or a configuration file. It also supports CLAHE application, video downsampling, and exclusion masks for stabilization. Exclusion masks can be provided in any of the supported formats: axis-aligned boxes (`yolo`/`xywh`), oriented bounding boxes (`xywha`), four-corner boxes (`four`), arbitrary polygons (`polygon`), and circular regions (`circle`).
 
 ### Usage
 
@@ -32,8 +32,9 @@ python stabilize_video.py <input> [options]
 - `-nm`, `--no-mask`: Do not use exclusion masks during stabilization.
 - `-mp MASK_PATH`, `--mask-path MASK_PATH`: Custom mask filepath (default: input with .txt extension).
 - `-mfi MASK_FRAME_IDX`, `--mask-frame-idx MASK_FRAME_IDX`: Frame number column index in the mask file (default: 0).
-- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the 4 bounding box parameters used as masks (default: 2).
-- `me MASK_ENC`, `--mask-enc MASK_ENC`: Bounding box encoding. Choices: ‘yolo’, ‘pascal’, ‘coco’ (default: yolo).
+- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the bounding box parameters used as masks (default: 2). The number of columns read depends on the mask format.
+- `-mei MASK_END_IDX`, `--mask-end-idx MASK_END_IDX`: Exclusive end column index for mask columns (default: auto-determined from the format). Must be set for `polygon` when the polygon data does not extend to the last column.
+- `me MASK_ENC`, `--mask-enc MASK_ENC`: Mask format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points), `polygon` (arbitrary polygon), `circle` (centre + radius) (default: `yolo`). Note: `polygon` and `circle` are supported for masking only and cannot be used for box transformation.
 
 **Visualization Options:**
 
@@ -90,7 +91,7 @@ python stabilize_video.py <input> [options]
 
 ### Description
 
-`stabilize_boxes.py` stabilizes bounding boxes (BBs) in a video using the ‘stabilo’ library. It reads a video file and a corresponding tracks file containing BBs for each frame of the video. The script then stabilizes these BBs and saves them to a file. It also provides options to visualize the stabilized and un-stabilized BBs in real-time or save the visualization as a video. The stabilization can be performed with respect to a custom reference frame, and exclusion masks can be used to exclude certain areas from stabilization.
+`stabilize_boxes.py` stabilizes bounding boxes (BBs) in a video using the 'stabilo' library. It reads a video file and a corresponding tracks file containing BBs for each frame of the video. The script then stabilizes these BBs and saves them to a file. It also provides options to visualize the stabilized and un-stabilized BBs in real-time or save the visualization as a video. The stabilization can be performed with respect to a custom reference frame, and exclusion masks can be used to exclude certain areas from stabilization. Tracks and masks can be provided in different formats: axis-aligned boxes (`yolo`/`xywh`), oriented bounding boxes (`xywha`), and four-corner boxes (`four`) are supported for the tracks to be stabilized; additionally, `polygon` and `circle` are available for exclusion masks.
 
 ### Usage
 
@@ -112,16 +113,18 @@ python stabilize_boxes.py <input> [options]
 
 - `-t TRACKS`, `--tracks TRACKS`: Filepath to the input tracks file (default: input with .txt extension).
 - `-bfi BOX_FRAME_IDX`, `--boxes-frame-idx BOX_FRAME_IDX`: Frame number column index in the tracks file (default: 0).
-- `-bsi BOXES_START_IDX`, `--boxes-start-idx BOXES_START_IDX`: Start column index of the 4 bounding box parameters (default: 2).
-- `-be BOXES_ENC`, `--boxes-enc BOXES_ENC`: Bounding box encoding. Choices: ‘yolo’, ‘pascal’, ‘coco’ (default: yolo).
+- `-bsi BOXES_START_IDX`, `--boxes-start-idx BOXES_START_IDX`: Start column index of the bounding box parameters (default: 2). The number of columns read depends on the box format.
+- `-bei BOXES_END_IDX`, `--boxes-end-idx BOXES_END_IDX`: Exclusive end column index for box columns (default: auto-determined from the format). Must be set for `polygon` (not applicable to tracks, included for completeness) when the data does not extend to the last column.
+- `-be BOXES_ENC`, `--boxes-enc BOXES_ENC`: Bounding box format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points) (default: `yolo`).
 
 **Mask Options:**
 
 - `-nm`, `--no-mask`: Do not use exclusion masks during stabilization.
 - `-mp MASK_PATH`, `--mask-path MASK_PATH`: Custom mask filepath (default: input with .txt extension).
 - `-mfi MASK_FRAME_IDX`, `--mask-frame-idx MASK_FRAME_IDX`: Frame number column index in the mask file (default: 0).
-- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the 4 bounding box parameters used as masks (default: 2).
-- `-me MASK_ENC`, `--mask-enc MASK_ENC`: Bounding box encoding. Choices: ‘yolo’, ‘pascal’, ‘coco’ (default: yolo).
+- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the bounding box parameters used as masks (default: 2). The number of columns read depends on the mask format.
+- `-mei MASK_END_IDX`, `--mask-end-idx MASK_END_IDX`: Exclusive end column index for mask columns (default: auto-determined from the format). Must be set for `polygon` when the polygon data does not extend to the last column.
+- `-me MASK_ENC`, `--mask-enc MASK_ENC`: Mask format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points), `polygon` (arbitrary polygon), `circle` (centre + radius) (default: `yolo`). Note: `polygon` and `circle` are supported for masking only.
 
 **Visualization Options:**
 
