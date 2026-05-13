@@ -28,14 +28,16 @@ Tracks Options:
     --tracks TRACKS    : Filepath to the tracks file (default: input with .txt extension).
     --boxes-frame-idx BOXES_FRAME_IDX : Frame number column index in the tracks file (default: 0).
     --boxes-start-idx BOXES_START_IDX : Start column index of the 4 BB parameters in the tracks file (default: 2).
-    --boxes-enc BOXES_ENC : Bounding box encoding. Choices: 'yolo', 'pascal', 'coco' (default: yolo).
+    --boxes-end-idx BOXES_END_IDX : Exclusive end column index for box columns (default: auto from format). Required for 'polygon' when it does not run to the last column.
+    --boxes-enc BOXES_ENC : Bounding box encoding. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four' (default: yolo).
 
 Mask Options:
     --no-mask          : Disable exclusion masks during stabilization.
     --mask-path MASK_PATH : Custom mask file for stabilization (default: same as boxes).
     --mask-frame-idx MASK_FRAME_IDX : Frame number column index in the mask file (default: 0).
-    --mask-start-idx MASK_START_IDX : Start column index of the 4 BB parameters in the mask file (default: 2).
-    --mask-enc MASK_ENC : Mask encoding. Choices: 'yolo', 'pascal', 'coco' (default: yolo).
+    --mask-start-idx MASK_START_IDX : Start column index of the bounding box parameters in the mask file (default: 2).
+    --mask-end-idx MASK_END_IDX : Exclusive end column index for mask columns (default: auto from format). Required for 'polygon' when it does not run to the last column.
+    --mask-enc MASK_ENC : Mask format. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle' (default: yolo).
 
 Visualization Options:
     --viz              : Show the stabilized and un-stabilized tracks.
@@ -88,6 +90,8 @@ from utils import (
     close_streams,
     draw_boxes,
     draw_text,
+    ENCODING_NUM_COLS,
+    ENCODING_TO_BOX_FORMAT,
     get_boxes_for_frame,
     get_boxes_from_tracks,
     initialize_progress_bar,
@@ -111,10 +115,14 @@ def stabilize_boxes(args, kwargs):
     writer = initialize_track_write_stream(args, w, h, fps, logger)
     tracks = load_tracks(args, logger)
     boxes = get_boxes_from_tracks(tracks, args, logger)
+    boxes_box_format = ENCODING_TO_BOX_FORMAT[args.boxes_enc]
+
     if args.mask_path:
         masks = load_exclusion_masks(args, logger)
+        mask_box_format = ENCODING_TO_BOX_FORMAT[args.mask_enc]
     else:
         masks = boxes
+        mask_box_format = boxes_box_format
         logger.info("Using the bounding boxes found in tracks as exclusion masks.")
 
     pbar = initialize_progress_bar(args, frame_count)
@@ -133,7 +141,7 @@ def stabilize_boxes(args, kwargs):
             sys.exit(1)
 
         ref_mask = None if args.no_mask else get_boxes_for_frame(masks, ref_frame_number)
-        stabilizer.set_ref_frame(ref_frame, ref_mask)
+        stabilizer.set_ref_frame(ref_frame, ref_mask, box_format=mask_box_format)
 
         frame_num = 0
         reader.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
@@ -147,13 +155,16 @@ def stabilize_boxes(args, kwargs):
                 boxes_frame_stab = boxes_frame
             else:
                 mask = None if args.no_mask else get_boxes_for_frame(masks, frame_num)
-                stabilizer.stabilize(frame, mask)
+                stabilizer.stabilize(frame, mask, box_format=mask_box_format)
                 cur_trans_matrix = stabilizer.get_cur_trans_matrix()
-                boxes_frame_stab = stabilizer.transform_boxes(boxes_frame, cur_trans_matrix)
+                boxes_frame_stab = stabilizer.transform_boxes(
+                    boxes_frame, cur_trans_matrix,
+                    in_box_format=boxes_box_format, out_box_format=boxes_box_format
+                )
             boxes_stab.append(boxes_frame_stab)
 
             if (args.viz or args.save_viz):
-                img = visualize_box_movements(args, boxes_frame, boxes_frame_stab, prev_centers, prev_centers_stab, w, h, frame_num)
+                img = visualize_box_movements(args, boxes_frame, boxes_frame_stab, prev_centers, prev_centers_stab, w, h, frame_num, boxes_box_format)
                 if args.viz:
                     cv2.imshow('Stabilization Process Visualization', img)
                     if cv2.waitKey(args.speed) & 0xFF == ord('q'):
@@ -172,7 +183,7 @@ def stabilize_boxes(args, kwargs):
     finally:
         close_streams(args, reader, pbar, writer_track=writer)
 
-def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_stab, w, h, frame_num):
+def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_stab, w, h, frame_num, boxes_box_format='xywh'):
     """
     Display bounding box trajectories on a canvas.
     """
@@ -185,17 +196,34 @@ def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_
     cv2.rectangle(img, top_left, bottom_right, (211, 211, 211), 2)
     draw_text(img, 'Reference frame boundaries', pos=(top_left[0], top_left[1] - 70), scale=5, color_fg=3*(211, ))
 
-    def adjust_boxes(boxes):
-        return [(box[0] + top_left[0], box[1] + top_left[1], box[2], box[3]) for box in boxes]
+    dx, dy = top_left
+
+    def adjust_boxes(bxs):
+        if bxs is None or len(bxs) == 0:
+            return bxs
+        result = np.array(bxs, dtype=float)
+        if boxes_box_format in ('xywh', 'xywha'):
+            result[:, 0] += dx
+            result[:, 1] += dy
+        elif boxes_box_format == 'four':
+            result[:, ::2] += dx
+            result[:, 1::2] += dy
+        return result
 
     boxes_adjusted = adjust_boxes(boxes)
     boxes_stab_adjusted = adjust_boxes(boxes_stab)
 
-    img = draw_boxes(img, boxes_adjusted, (0, 0, 255))
-    img = draw_boxes(img, boxes_stab_adjusted, (0, 255, 0))
+    img = draw_boxes(img, boxes_adjusted, (0, 0, 255), box_format=boxes_box_format)
+    img = draw_boxes(img, boxes_stab_adjusted, (0, 255, 0), box_format=boxes_box_format)
 
-    def get_centers(boxes):
-        return [(int(box[0]), int(box[1])) for box in boxes]
+    def get_centers(bxs):
+        if bxs is None or len(bxs) == 0:
+            return []
+        if boxes_box_format in ('xywh', 'xywha'):
+            return [(int(b[0]), int(b[1])) for b in bxs]
+        elif boxes_box_format == 'four':
+            return [(int(np.mean(b[::2])), int(np.mean(b[1::2]))) for b in bxs]
+        return []
 
     prev_centers.append(get_centers(boxes_adjusted))
     prev_centers_stab.append(get_centers(boxes_stab_adjusted))
@@ -235,7 +263,8 @@ def save_stabilized_boxes(args, tracks, boxes_stab):
         tracks_stab = np.copy(tracks)
         if boxes_stab.shape[0] < tracks_stab.shape[0]:
             boxes_stab = np.pad(boxes_stab, ((0, tracks_stab.shape[0] - boxes_stab.shape[0]), (0, 0)), mode='constant', constant_values=np.nan)
-        tracks_stab[:, args.boxes_start_idx:args.boxes_start_idx + 4] = boxes_stab
+        num_box_cols = ENCODING_NUM_COLS[args.boxes_enc]
+        tracks_stab[:, args.boxes_start_idx:args.boxes_start_idx + num_box_cols] = boxes_stab
 
         np.savetxt(stabilized_tracks_filepath, tracks_stab, fmt='%g', delimiter=',')
         logger.info(f'Saved the stabilized bounding boxes in YOLO format to {stabilized_tracks_filepath}.')
@@ -256,14 +285,21 @@ def get_cli_arguments():
     parser.add_argument("--tracks", "-t", type=Path, help="filepath to the tracks file [default: input with .txt extension]")
     parser.add_argument("--boxes-frame-idx", "-bfi", type=int, default=0, help="frame number column index in the tracks file")
     parser.add_argument("--boxes-start-idx", "-bsi", type=int, default=2, help="start column index for bbox in the tracks file")
-    parser.add_argument("--boxes-enc", "-be", type=str, default="yolo", choices=['yolo','pascal','coco'], help="bbox encoding")
+    parser.add_argument("--boxes-end-idx", "-bei", type=int, default=None,
+                        help="exclusive end column index for box columns [default: auto from format, required for 'polygon' that does not span to the last column]")
+    parser.add_argument("--boxes-enc", "-be", type=str, default="yolo",
+                        choices=['yolo', 'pascal', 'coco', 'xywha', 'four'], help="bbox encoding")
 
     # mask options
     parser.add_argument("--no-mask", "-nm", action="store_true", help="disable exclusion masks during stabilization")
     parser.add_argument("--mask-path", "-mp", type=Path, help="custom mask file for stabilization [default: same as boxes]")
     parser.add_argument("--mask-frame-idx", "-mfi", type=int, default=0, help="frame number column index in mask file")
     parser.add_argument("--mask-start-idx", "-msi", type=int, default=2, help="start column index for bbox in mask file")
-    parser.add_argument("--mask-enc", "-me", type=str, default="yolo", choices=['yolo','pascal','coco'], help="mask encoding")
+    parser.add_argument("--mask-end-idx", "-mei", type=int, default=None,
+                        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]")
+    parser.add_argument("--mask-enc", "-me", type=str, default="yolo",
+                        choices=['yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle'],
+                        help="mask format")
 
     # visualization options
     parser.add_argument("--viz", "-v", action="store_true", help="show the stabilized and un-stabilized tracks")

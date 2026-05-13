@@ -13,6 +13,28 @@ from stabilo.utils import detect_delimiter, load_config
 
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ['Darwin', 'Linux', 'Windows'])
 
+# Maps CLI encoding names to stabilo box_format strings
+ENCODING_TO_BOX_FORMAT = {
+    'yolo': 'xywh',
+    'pascal': 'xywh',
+    'coco': 'xywh',
+    'xywha': 'xywha',
+    'four': 'four',
+    'polygon': 'polygon',
+    'circle': 'circle',
+}
+
+# Number of data columns per box, keyed by CLI encoding name (None = variable, read all)
+ENCODING_NUM_COLS = {
+    'yolo': 4,
+    'pascal': 4,
+    'coco': 4,
+    'xywha': 5,
+    'four': 8,
+    'polygon': None,
+    'circle': 3,
+}
+
 def separate_cli_arguments(cli_args):
     """
     Get the command-line arguments and the corresponding keyword
@@ -57,7 +79,8 @@ def load_tracks(args, logger):
 
 def load_exclusion_masks(args, logger):
     """
-    Read the exclusion masks (bounding boxes) from a file.
+    Read the exclusion masks from a file. Supports all mask encodings: yolo, pascal, coco,
+    xywha, four, polygon, and circle.
     """
     if args.no_mask:
         logger.info('Exclusion masks disabled.')
@@ -71,8 +94,8 @@ def load_exclusion_masks(args, logger):
     try:
         delimiter = detect_delimiter(mask_filepath)
         masks = np.loadtxt(mask_filepath, delimiter=delimiter)
-        columns = [args.mask_frame_idx, *range(args.mask_start_idx, args.mask_start_idx + 4)]
-        boxes = get_boxes(masks, columns, args.mask_enc, logger)
+        boxes = get_boxes(masks, args.mask_frame_idx, args.mask_start_idx, args.mask_enc, logger,
+                          end_idx=getattr(args, 'mask_end_idx', None))
     except Exception as e:
         logger.error(f'Error reading {mask_filepath}: {e}')
         sys.exit(1)
@@ -84,15 +107,29 @@ def get_boxes_from_tracks(tracks, args, logger):
     """
     Get the bounding boxes from the tracks.
     """
-    columns = [args.boxes_frame_idx, *range(args.boxes_start_idx, args.boxes_start_idx + 4)]
-    return get_boxes(tracks, columns, args.boxes_enc, logger)
+    return get_boxes(tracks, args.boxes_frame_idx, args.boxes_start_idx, args.boxes_enc, logger,
+                     end_idx=getattr(args, 'boxes_end_idx', None))
 
-def get_boxes(boxes, columns, encoding, logger):
+def get_boxes(data, frame_col_idx, start_idx, encoding, logger, end_idx=None):
     """
-    Get the bounding boxes from the exclusion masks or tracks.
+    Extract bounding-box columns from a raw data array.
+
+    The number of box columns is determined by `encoding`. For 'polygon', all columns
+    from `start_idx` to the end of the row are read by default (variable width); supply
+    `end_idx` (exclusive) to restrict the range when the polygon data does not span to
+    the last column. `end_idx` also overrides the fixed column count for any other format.
+    For 'pascal' and 'coco', the four columns are converted to centre-x/y/w/h (YOLO)
+    format in-place.
     """
+    num_cols = ENCODING_NUM_COLS[encoding]
     try:
-        boxes = boxes[:, columns]
+        if end_idx is not None:
+            box_cols = list(range(start_idx, end_idx))
+        elif num_cols is None:
+            box_cols = list(range(start_idx, data.shape[1]))
+        else:
+            box_cols = list(range(start_idx, start_idx + num_cols))
+        boxes = data[:, [frame_col_idx] + box_cols]
         if encoding == 'pascal':
             logger.warning('Pascal VOC encoding is not supported. Converting to YOLO format.')
             boxes[:, 1] = (boxes[:, 1] + boxes[:, 3]) / 2
@@ -208,15 +245,33 @@ def close_streams(args, reader, pbar, writer_vid=None, writer_viz=None, writer_t
     if args.viz:
         cv2.destroyAllWindows()
 
-def draw_boxes(img, boxes, color=(0, 255, 0), line_type=cv2.LINE_AA):
+def draw_boxes(img, boxes, color=(0, 255, 0), box_format='xywh', line_type=cv2.LINE_AA):
     """
-    Draw bounding boxes.
+    Draw bounding boxes on an image. Supports formats: 'xywh' (and legacy aliases 'yolo',
+    'pascal', 'coco'), 'xywha', 'four', 'polygon', and 'circle'.
     """
-    if boxes is not None:
-        for box in boxes:
-            x_c, y_c, w, h = box
-            pt1, pt2 = (int(x_c - w / 2), int(y_c - h / 2)), (int(x_c + w / 2), int(y_c + h / 2))
+    if boxes is None:
+        return img
+    for box in boxes:
+        if box_format in ('xywh', 'yolo', 'pascal', 'coco'):
+            x_c, y_c, w, h = box[0], box[1], box[2], box[3]
+            pt1 = (int(x_c - w / 2), int(y_c - h / 2))
+            pt2 = (int(x_c + w / 2), int(y_c + h / 2))
             cv2.rectangle(img, pt1, pt2, color, 2, line_type)
+        elif box_format == 'xywha':
+            x_c, y_c, w, h, angle = box[0], box[1], box[2], box[3], box[4]
+            rect = ((float(x_c), float(y_c)), (float(w), float(h)), float(-angle))
+            pts = cv2.boxPoints(rect)
+            cv2.drawContours(img, [np.int32(pts)], 0, color, 2, line_type)
+        elif box_format == 'four':
+            pts = np.int32(np.array(box).reshape(4, 2))
+            cv2.drawContours(img, [pts], 0, color, 2, line_type)
+        elif box_format == 'polygon':
+            pts = np.int32(np.array(box).reshape(-1, 2))
+            cv2.drawContours(img, [pts], 0, color, 2, line_type)
+        elif box_format == 'circle':
+            x_c, y_c, r = box[0], box[1], box[2]
+            cv2.circle(img, (int(x_c), int(y_c)), max(1, int(r)), color, 2, line_type)
     return img
 
 def draw_text(img, text, font=cv2.FONT_HERSHEY_PLAIN, pos=(0, 0), scale=7, thickness=5, color_fg=(0, 255, 0)):

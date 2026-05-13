@@ -30,7 +30,8 @@ Mask Options:
     --mask-path MASK_PATH : Custom mask filepath (default: input with .txt extension).
     --mask-frame-idx MASK_FRAME_IDX : Frame number column index in the mask file (default: 0).
     --mask-start-idx MASK_START_IDX : Start column index of the 4 bounding box parameters used as masks (default: 2).
-    --mask-enc MASK_ENC : Bounding box encoding. Choices: 'yolo', 'pascal', 'coco' (default: yolo).
+    --mask-end-idx MASK_END_IDX : Exclusive end column index for mask columns (default: auto from format). Required for 'polygon' when it does not run to the last column.
+    --mask-enc MASK_ENC : Mask format. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle' (default: yolo).
 
 Visualization Options:
     --viz              : Visualize the transformation process (default: False).
@@ -92,6 +93,7 @@ from utils import (
     close_streams,
     draw_boxes,
     draw_text,
+    ENCODING_TO_BOX_FORMAT,
     get_boxes_for_frame,
     initialize_progress_bar,
     initialize_read_streams,
@@ -104,6 +106,9 @@ from stabilo import Stabilizer
 from stabilo.utils import setup_logger
 
 COLOURS = np.random.randint(0, 256, (100, 3))
+
+# Mask formats that can be geometrically transformed (polygon/circle are masking-only)
+TRANSFORMABLE_BOX_FORMATS = ('xywh', 'xywha', 'four')
 
 logger = setup_logger(__name__)
 
@@ -120,6 +125,7 @@ def stabilize_video(args, kwargs):
 
     frame_num = 0
     ref_frame_number = args.ref_frame
+    mask_box_format = ENCODING_TO_BOX_FORMAT[args.mask_enc]
 
     try:
         reader.set(cv2.CAP_PROP_POS_FRAMES, ref_frame_number)
@@ -129,7 +135,7 @@ def stabilize_video(args, kwargs):
             sys.exit(1)
 
         ref_mask = None if args.no_mask else get_boxes_for_frame(masks, ref_frame_number)
-        stabilizer.set_ref_frame(ref_frame, ref_mask)
+        stabilizer.set_ref_frame(ref_frame, ref_mask, box_format=mask_box_format)
 
         reader.set(cv2.CAP_PROP_POS_FRAMES, 0)
         while reader.isOpened():
@@ -142,15 +148,19 @@ def stabilize_video(args, kwargs):
                 frame_stab = frame
                 boxes_stab = mask
             else:
-                stabilizer.stabilize(frame, mask)
+                stabilizer.stabilize(frame, mask, box_format=mask_box_format)
                 frame_stab = stabilizer.warp_cur_frame()
-                boxes_stab = stabilizer.transform_cur_boxes()
+                boxes_stab = (
+                    stabilizer.transform_cur_boxes(out_box_format=mask_box_format)
+                    if mask_box_format in TRANSFORMABLE_BOX_FORMATS
+                    else None
+                )
 
             if writer_vid is not None and frame_stab is not None:
                 writer_vid.write(frame_stab)
 
             if (args.viz or args.save_viz) and frame_stab is not None:
-                imgs = render_stabilization_visuals(stabilizer, frame, frame_stab, mask, boxes_stab, frame_num, args)
+                imgs = render_stabilization_visuals(stabilizer, frame, frame_stab, mask, boxes_stab, frame_num, args, mask_box_format)
                 if args.viz:
                     cv2.imshow('Stabilization Process Visualization', imgs)
                     if cv2.waitKey(args.speed) & 0xFF == ord('q'):
@@ -169,7 +179,7 @@ def stabilize_video(args, kwargs):
     finally:
         close_streams(args, reader, pbar, writer_vid, writer_viz)
 
-def render_stabilization_visuals(stabilizer, frame, frame_stab, boxes, boxes_stab, frame_num, args):
+def render_stabilization_visuals(stabilizer, frame, frame_stab, boxes, boxes_stab, frame_num, args, mask_box_format='xywh'):
     """
     Illustrate the stabilization process with feature points, lines, and bounding boxes.
     """
@@ -241,8 +251,8 @@ def render_stabilization_visuals(stabilizer, frame, frame_stab, boxes, boxes_sta
 
 
     if not args.no_boxes:
-        frame = draw_boxes(frame, boxes, color=(0, 0, 255))
-        frame_stab = draw_boxes(frame_stab, boxes_stab, color=(0, 255,0))
+        frame = draw_boxes(frame, boxes, color=(0, 0, 255), box_format=mask_box_format)
+        frame_stab = draw_boxes(frame_stab, boxes_stab, color=(0, 255,0), box_format=mask_box_format)
     draw_text(frame, f'Source video frame {frame_num}', scale=6, color_fg=(255, 255, 255))
     draw_text(frame_stab, f'Stabilized video frame {frame_num}', scale=6, color_fg=(255, 255, 255))
 
@@ -270,7 +280,11 @@ def get_cli_arguments():
     parser.add_argument("--mask-path", "-mp", type=Path, help="custom mask file [default: input with .txt extension]")
     parser.add_argument("--mask-frame-idx", "-mfi", type=int, default=0, help="frame number column index in mask file")
     parser.add_argument("--mask-start-idx", "-msi", type=int, default=2, help="start column index for bbox in mask file")
-    parser.add_argument("--mask-enc", "-me", type=str, default="yolo", choices=['yolo','pascal','coco'], help="mask encoding")
+    parser.add_argument("--mask-end-idx", "-mei", type=int, default=None,
+                        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]")
+    parser.add_argument("--mask-enc", "-me", type=str, default="yolo",
+                        choices=['yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle'],
+                        help="mask format")
 
     # visualization options
     parser.add_argument("--viz", "-v", action="store_true", help="visualize the transformation process")
