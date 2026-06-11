@@ -6,15 +6,13 @@
 # project metadata for the Stabilo package. 
 #
 # Installation:
-# To install the Stabilo package, use the following command:
-#   pip install stabilo
-#
-# For development purposes, enabling real-time updates without 
-# reinstallation, clone the repository and install the package
-# in editable mode with the following command:
-#   pip install -e .[dev]
-# or for zsh shell:
-#   pip install -e '.[dev]'
+#   pip install stabilo                                       # from PyPI
+#   pip install -e .                                          # core (editable)
+#   pip install -e '.[dev]'                                   # core + dev
+#   pip install -e '.[extras]'                                # core + extras
+#   uv venv --python 3.11 && uv pip install -e .              # core (uv; faster)
+#   uv venv --python 3.11 && uv pip install -e '.[dev]'       # core + dev (uv)
+#   uv venv --python 3.11 && uv pip install -e '.[extras]'    # core + extras (uv)
 #
 # ==============================================================
 
@@ -51,8 +49,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "numpy>=1.26.4,<2.0",
-    "opencv-python>=4.6.0",
+    "numpy>=1.26.4",
+    "opencv-python>=4.10.0",
     "pyyaml>=5.3.1",
     "tqdm>=4.64.0",
 ]
