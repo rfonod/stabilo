@@ -57,16 +57,41 @@ This pipeline makes Stabilo suitable for:
 
 ## 2. Installation
 
+It is recommended to create and activate a **Python virtual environment** (Python >= 3.9 and <= 3.13) first:
+
 ```bash
-# create and activate a virtual environment (Python >= 3.9)
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+python3.11 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
 
-# install from PyPI
+<details>
+<summary>Alternatives: conda or uv</summary>
+
+**[Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install):**
+```bash
+conda create -n stabilo python=3.11 -y
+conda activate stabilo
+```
+
+**[uv](https://docs.astral.sh/uv/getting-started/installation/) (fastest; use `uv pip install` in the step below):**
+```bash
+uv venv --python 3.11
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+</details>
+
+Then, install the `stabilo` package using one of the following options:
+
+**Option 1 — from PyPI** (recommended):
+```bash
 pip install stabilo
+```
 
-# or from local source in editable mode
-pip install -e '.[dev]'
+**Option 2 — from local source** (for development):
+```bash
+git clone https://github.com/rfonod/stabilo.git
+cd stabilo
+pip install -e '.[dev]'  # editable install with dev dependencies
 ```
 
 ---
@@ -94,7 +119,7 @@ stabilizer.set_ref_frame(ref_frame, ref_boxes, box_format='xywh')
 stabilizer.stabilize(cur_frame, cur_boxes, box_format='xywh')
 
 # 4. Retrieve results
-stabilized_frame  = stabilizer.warp_cur_frame()             # warped frame
+stabilized_frame  = stabilizer.warp_cur_frame()              # warped frame
 stabilized_boxes  = stabilizer.transform_cur_boxes()         # transformed boxes (xywh)
 trans_matrix      = stabilizer.get_cur_trans_matrix()        # 3x3 or 2x3 matrix
 ```
