@@ -41,19 +41,28 @@ Stabilo integrates with and complements several specialized tools:
 
 ## Installation
 
-It is recommended to create and activate a **Python Virtual Environment** (Python >= 3.9) first. You can use Python's built-in `venv` module:
+It is recommended to create and activate a **Python virtual environment** (Python >= 3.9 and <= 3.13) first:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+python3.11 -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-Alternatively, you can use [Miniconda3](https://docs.anaconda.com/free/miniconda/):
+<details>
+<summary>Alternatives: conda or uv</summary>
 
+**[Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install):**
 ```bash
 conda create -n stabilo python=3.11 -y
 conda activate stabilo
 ```
+
+**[uv](https://docs.astral.sh/uv/getting-started/installation/) (fastest; use `uv pip install` in step 3):**
+```bash
+uv venv --python 3.11
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+</details>
 
 Then, install the stabilo library using one of the following options:
 
@@ -188,11 +197,11 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = apr,
+      month = jun,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.2.0},
+      version = {1.2.1},
       year = {2026}
     }
     ```
