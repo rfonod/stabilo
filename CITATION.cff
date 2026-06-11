@@ -15,8 +15,8 @@ identifiers:
 repository-code: 'https://github.com/rfonod/stabilo'
 url: 'https://github.com/rfonod/stabilo'
 license: MIT
-version: 1.2.0
-date-released: '2026-05-13'
+version: 1.2.1
+date-released: '2026-06-11'
 preferred-citation:
   type: article
   title: "Advanced computer vision for extracting georeferenced vehicle trajectories from drone imagery"  
