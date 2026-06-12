@@ -45,6 +45,8 @@
   ],
   "dates": [
     {
+      "start": "2026-06-11",
+      "end": "2026-06-11",
       "type": "updated",
       "description": "Update from v1.2.0 to v1.2.1"
     }
