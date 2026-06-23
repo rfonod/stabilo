@@ -64,6 +64,7 @@ class Stabilizer:
     VALID_MATCHERS = ['bf', 'flann']
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
+    VALID_MATCH_QUERY_FRAMES = ['reference', 'current']
     VALID_RANSAC_METHODS_DICT = {
         'cv2.LMEDS': cv2.LMEDS,  # 4 - LMEDS
         'cv2.RANSAC': cv2.RANSAC,  # 8 - RANSAC
@@ -89,8 +90,11 @@ class Stabilizer:
         - downsample_ratio: float - down-sampling ratio for the frames (e.g., 0.5 for half the size)
         - max_features: int - max number of features to detect (for BRISK, KAZE, and AKAZE this is an approximation)
         - ref_multiplier: float - multiplier for max features in reference frame (ref_multiplier x max_features)
+        - sift_enable_precise_upscale: bool - enable SIFT precise sub-pixel upscaling at octave -1 (SIFT/RSIFT only; default False)
+        - rsift_eps: float - epsilon added to the L1 norm during RootSIFT (rsift) descriptor normalization (default 1e-8)
         - mask_use: bool - use mask for feature detection
         - filter_ratio: float - filtering ratio; Lowe's ratio for 'ratio' filter, distance threshold ratio for 'distance' filter
+        - match_query_frame: str - which descriptors are the knnMatch query: 'reference' (default) or 'current'
         - ransac_method: int - method for RANSAC algorithm (see above for options)
         - ransac_epipolar_threshold: float - threshold for RANSAC (e.g., 1.0)
         - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
@@ -174,10 +178,13 @@ class Stabilizer:
         return (
             cv2.cuda.SIFT_create(self.max_features)
             if self.gpu
-            else cv2.SIFT_create(self.max_features),  # (enable_precise_upscale=True)
+            else cv2.SIFT_create(self.max_features, enable_precise_upscale=self.sift_enable_precise_upscale),
             cv2.cuda.SIFT_create(round(self.ref_multiplier * self.max_features))
             if self.gpu
-            else cv2.SIFT_create(round(self.ref_multiplier * self.max_features)),
+            else cv2.SIFT_create(
+                round(self.ref_multiplier * self.max_features),
+                enable_precise_upscale=self.sift_enable_precise_upscale,
+            ),
         )
 
     def _create_brisk_detectors(self):
@@ -326,13 +333,22 @@ class Stabilizer:
         """
         success = self.process_frame(frame, boxes, box_format, is_reference=False)
         if success:
-            matches = self.get_matches(self.ref_desc, self.cur_desc)
-            if matches and self.ref_kpts is not None and self.cur_kpts is not None:
-                self.ref_pts = np.float32([self.ref_kpts[m.queryIdx].pt for m in matches]).reshape(-1, 2)
-                self.cur_pts = np.float32([self.cur_kpts[m.trainIdx].pt for m in matches]).reshape(-1, 2)
+            if self.match_query_frame == 'current':
+                matches = self.get_matches(self.cur_desc, self.ref_desc)  # query = current frame
+                if matches and self.ref_kpts is not None and self.cur_kpts is not None:
+                    self.cur_pts = np.float32([self.cur_kpts[m.queryIdx].pt for m in matches]).reshape(-1, 2)
+                    self.ref_pts = np.float32([self.ref_kpts[m.trainIdx].pt for m in matches]).reshape(-1, 2)
+                else:
+                    self.ref_pts = []
+                    self.cur_pts = []
             else:
-                self.ref_pts = []
-                self.cur_pts = []
+                matches = self.get_matches(self.ref_desc, self.cur_desc)  # query = reference frame
+                if matches and self.ref_kpts is not None and self.cur_kpts is not None:
+                    self.ref_pts = np.float32([self.ref_kpts[m.queryIdx].pt for m in matches]).reshape(-1, 2)
+                    self.cur_pts = np.float32([self.cur_kpts[m.trainIdx].pt for m in matches]).reshape(-1, 2)
+                else:
+                    self.ref_pts = []
+                    self.cur_pts = []
             self.calculate_transformation_matrix()
 
     def process_frame(
@@ -415,7 +431,7 @@ class Stabilizer:
             return None, None, None
 
         if self.detector_name == 'rsift':
-            desc /= desc.sum(axis=1, keepdims=True) + 1e-8
+            desc /= desc.sum(axis=1, keepdims=True) + self.rsift_eps
             desc = np.sqrt(desc)
 
         if self.downsample_ratio != 1.0:
@@ -509,9 +525,8 @@ class Stabilizer:
             inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
             inliers_count = 'N/A'
 
-        if self.viz:
-            self.cur_inliers = inliers
-            self.cur_inliers_count = inliers_count
+        self.cur_inliers = inliers
+        self.cur_inliers_count = inliers_count
 
     @timer(PROFILING)
     def create_binary_mask(self, boxes: np.ndarray, box_format: str) -> np.ndarray:
@@ -748,6 +763,23 @@ class Stabilizer:
         """
         return self.cur_trans_matrix
 
+    def get_cur_inliers_count(self) -> Union[int, None]:
+        """
+        Get the number of inliers used to estimate the current transformation matrix.
+        Returns None if unavailable (e.g., estimation failed or not yet computed).
+        """
+        return self.cur_inliers_count if isinstance(self.cur_inliers_count, int) else None
+
+    def get_cur_num_keypoints(self) -> tuple:
+        """
+        Get the number of detected keypoints as (num_reference_keypoints, num_current_keypoints).
+        Either entry is None if the corresponding keypoints are unavailable.
+        """
+        return (
+            len(self.ref_kpts) if self.ref_kpts is not None else None,
+            len(self.cur_kpts) if self.cur_kpts is not None else None,
+        )
+
     def get_basic_info(self) -> dict:
         """
         Get basic information about the Stabilizer.
@@ -810,6 +842,10 @@ class Stabilizer:
         if self.transformation_type not in self.VALID_TRANSFORMATION_TYPES:
             raise ValueError(
                 f"Invalid transformation type: {self.transformation_type}. Choose from {self.VALID_TRANSFORMATION_TYPES}"
+            )
+        if self.match_query_frame not in self.VALID_MATCH_QUERY_FRAMES:
+            raise ValueError(
+                f"Invalid match_query_frame: {self.match_query_frame}. Choose from {self.VALID_MATCH_QUERY_FRAMES}"
             )
         if self.ransac_method not in self.VALID_RANSAC_METHODS_DICT.values():
             raise ValueError(

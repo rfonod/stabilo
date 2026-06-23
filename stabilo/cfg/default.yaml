@@ -23,11 +23,14 @@ downsample_ratio: 0.5  # Downsample ratio for image resizing; (0.0, 1.0]
 detector_name: 'orb'  # Feature detector name; ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze']
 max_features: 2000  # Maximum number of features to detect; [0, inf)
 ref_multiplier: 2.0  # Reference multiplier for the number of features; (0.0, inf)
+sift_enable_precise_upscale: false  # SIFT/RSIFT: enable precise sub-pixel upscaling at octave -1; [true, false]
+rsift_eps: 0.00000001  # RootSIFT L1-normalization epsilon (1e-8); (0.0, inf)
 
 # Feature matching and filtering related
 matcher_name: 'bf'  # Feature matcher name; ['bf', 'flann']
 filter_type: 'ratio'  # Filter type; ['none', 'ratio', 'distance']
 filter_ratio: 0.9  # Ratio test threshold; (0.0, 1.0]
+match_query_frame: 'reference'  # Which descriptors are the knnMatch query; ['reference', 'current']
 
 # Transformation matrix calculation related
 transformation_type: 'projective'  # Transformation type; ['projective', 'affine']
