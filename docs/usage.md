@@ -283,11 +283,14 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `matcher_name` | `'bf'` | `bf`, `flann` | Feature matcher |
 | `filter_type` | `'ratio'` | `none`, `ratio`, `distance` | Match filtering strategy |
 | `filter_ratio` | `0.9` | `(0, 1]` | Lowe's ratio (for `ratio`) or distance threshold ratio (for `distance`) |
+| `match_query_frame` | `'reference'` | `reference`, `current` | Which frame's descriptors form the `knnMatch` query (matching is asymmetric) |
 | `transformation_type` | `'projective'` | `projective`, `affine` | Geometric model |
 | `clahe` | `false` | `true`, `false` | Apply CLAHE contrast enhancement |
 | `downsample_ratio` | `0.5` | `(0, 1]` | Resize factor before feature extraction |
 | `max_features` | `2000` | `> 0` (int) | Maximum keypoints to detect in current frame |
 | `ref_multiplier` | `2.0` | `>= 1.0` | Scale factor for keypoints in reference frame (`ref_multiplier x max_features`) |
+| `sift_enable_precise_upscale` | `false` | `true`, `false` | SIFT/rSIFT only: enable precise sub-pixel upscaling at octave -1 |
+| `rsift_eps` | `1e-8` | `> 0` | RootSIFT (`rsift`) L1-normalization epsilon |
 | `mask_use` | `true` | `true`, `false` | Enable exclusion masking |
 | `mask_margin_ratio` | `0.15` | `[0, 1]` | Fractional margin added to exclusion regions |
 | `ransac_method` | `38` | see section 11 | RANSAC algorithm |
@@ -334,6 +337,8 @@ Three filtering strategies:
 | `none` | Keep all matches returned by the matcher |
 | `ratio` | Lowe's ratio test: keep match `m` where `m.distance < filter_ratio x n.distance` |
 | `distance` | Distance threshold: keep matches below `min_dist + (max_dist - min_dist) x filter_ratio` |
+
+`knnMatch` is asymmetric, so the set of surviving matches depends on which descriptors are used as the query. By default (`match_query_frame='reference'`) the reference frame's descriptors are the query; set `match_query_frame='current'` to query with the current frame's descriptors instead. The estimated transform still maps current → reference in both cases.
 
 ---
 
@@ -382,6 +387,10 @@ Set `viz=True` to have Stabilo retain intermediate data on the instance after ea
 | `cur_inliers_count` | Number of inlier matches |
 
 These attributes are used by the companion utility scripts (e.g., `stabilize_video.py --viz`) to render side-by-side stabilisation visualisations.
+
+Match-quality statistics are also exposed through dedicated getters:
+- `get_cur_inliers_count() -> int | None` — number of inliers (or `None` if estimation failed or has not run yet).
+- `get_cur_num_keypoints() -> tuple` — `(num_reference_keypoints, num_current_keypoints)`.
 
 ---
 

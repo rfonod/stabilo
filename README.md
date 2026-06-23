@@ -201,7 +201,7 @@ If you use **Stabilo** in your research, software, or product, please cite the f
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.2.1},
+      version = {1.2.2},
       year = {2026}
     }
     ```
