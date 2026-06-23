@@ -15,7 +15,7 @@ identifiers:
 repository-code: 'https://github.com/rfonod/stabilo'
 url: 'https://github.com/rfonod/stabilo'
 license: MIT
-version: 1.2.2
+version: 1.2.3
 date-released: '2026-06-23'
 preferred-citation:
   type: article
