@@ -454,14 +454,22 @@ def test_invalid_match_query_frame():
 
 
 def test_match_quality_getters(images):
-    """Inlier count and keypoint counts are available without viz mode."""
+    """Inlier count, match count, and keypoint counts are available without viz mode."""
     cur_frame, ref_frame = images
     stab = Stabilizer(downsample_ratio=1.0, viz=False)
     stab.set_ref_frame(ref_frame)
+
+    assert stab.get_cur_num_matches() is None
+
     stab.stabilize(cur_frame)
 
     inliers_count = stab.get_cur_inliers_count()
     assert isinstance(inliers_count, int)
+
+    num_matches = stab.get_cur_num_matches()
+    assert isinstance(num_matches, int)
+    assert num_matches == len(stab.cur_inliers)
+    assert num_matches >= inliers_count
 
     num_ref_kpts, num_cur_kpts = stab.get_cur_num_keypoints()
     assert isinstance(num_ref_kpts, int)

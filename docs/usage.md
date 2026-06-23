@@ -390,6 +390,7 @@ These attributes are used by the companion utility scripts (e.g., `stabilize_vid
 
 Match-quality statistics are also exposed through dedicated getters:
 - `get_cur_inliers_count() -> int | None` — number of inliers (or `None` if estimation failed or has not run yet).
+- `get_cur_num_matches() -> int | None` — total number of good matches fed to the estimator (denominator of inliers/total), or `None` if `stabilize()` has not yet been called.
 - `get_cur_num_keypoints() -> tuple` — `(num_reference_keypoints, num_current_keypoints)`.
 
 ---

@@ -770,6 +770,13 @@ class Stabilizer:
         """
         return self.cur_inliers_count if isinstance(self.cur_inliers_count, int) else None
 
+    def get_cur_num_matches(self) -> Union[int, None]:
+        """
+        Get the number of good matches (point-pairs) fed to the transform estimator,
+        i.e. the denominator of inliers/total. Returns None if stabilize() has not yet been called.
+        """
+        return len(self.cur_inliers) if self.cur_inliers is not None else None
+
     def get_cur_num_keypoints(self) -> tuple:
         """
         Get the number of detected keypoints as (num_reference_keypoints, num_current_keypoints).
