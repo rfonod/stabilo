@@ -4,7 +4,7 @@
 
 **Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [Geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. For systematic evaluation and hyperparameter tuning, the companion tool [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 provides a dedicated benchmarking framework. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
 
-![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/main/assets/stabilo_visualization.webp)
+![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/v1.2.3/assets/stabilo_visualization.webp)
 
 ## Features
 
