@@ -4,7 +4,7 @@
 
 **Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [Geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. For systematic evaluation and hyperparameter tuning, the companion tool [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 provides a dedicated benchmarking framework. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
 
-![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/v1.2.3/assets/stabilo_visualization.webp)
+![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/main/assets/stabilo_visualization.webp)
 
 ## Features
 
@@ -12,6 +12,7 @@
 - **Trajectory Stabilization**: Transform object trajectories (e.g., bounding boxes) to a common fixed reference frame using homography or affine transformations.
 - **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization, supporting axis-aligned boxes, oriented bounding boxes (OBBs), four-point boxes, polygonal masks, and circular masks.
 - **Wide Range of Algorithms**: Includes support for various feature detectors (ORB, SIFT, RSIFT, BRISK, KAZE, AKAZE), matchers (BF, FLANN), RANSAC algorithms (MAGSAC++, DEGENSAC, ...), transformation types, and pre-processing options.
+- **Optional CUDA GPU Acceleration**: Feature detection, matching, and frame warping can run on an NVIDIA GPU (`gpu=True`) when built against a CUDA-enabled OpenCV; see [`docs/cuda.md`](docs/cuda.md) for build instructions. RANSAC-based transformation estimation always runs on CPU (no OpenCV CUDA equivalent exists).
 - **Customizable Parameters**: Fine-tune the stabilization by adjusting parameters such as the number of keypoints, RANSAC parameters, matching thresholds, downsampling factors, etc..
 - **Visualization Tools**: Generate visualizations of the stabilization process, with frame-by-frame comparisons and trajectory transformations (see the above animation).
 - **Threshold Analysis**: Analyze the relationship between detection thresholds and keypoint counts for BRISK, KAZE, and AKAZE to fairly benchmark with different detectors.
@@ -20,7 +21,6 @@
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
-- **GPU Acceleration**: Integration of GPU acceleration to improve processing speed.
 - **Bi-directional Matching**: Implementing bi-directional matching to enhance the robustness of keypoint matching.
 - **Additional Feature Detectors**: Adding support for more feature detectors and matchers to provide users with a wider range of options for stabilization.
 

@@ -47,6 +47,8 @@ python stabilize_video.py <input> [options]
 **Stabilo Configuration:**
 
 - `-cc CUSTOM_CONFIG`, `--custom-config CUSTOM_CONFIG`: Path to a config file that overrides the default stabilo parameters or the CLI arguments. See an [example config file](./custom.yaml).
+- `-g`, `--gpu`: Use CUDA GPU acceleration for feature detection, matching, and frame warping (default: False). Requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](../docs/cuda.md).
+- `-gid GPU_DEVICE_ID`, `--gpu-device-id GPU_DEVICE_ID`: CUDA device index to use when `--gpu` is set (default: 0).
 - [...] Most of the Stabilo parameters can be provided as command-line arguments. Examples include `--feature-type`, `--matcher-type`, and `--ransac-reproj-threshold`. For a complete list of parameters, refer to the argument parser options or the Stabilo documentation.
 
 ### Examples
@@ -85,6 +87,12 @@ python stabilize_video.py <input> [options]
 
     ```bash
     python stabilize_video.py path/to/video/video.mp4 --mask-path path/to/mask/mask.txt --mask-start 1 --viz
+    ```
+
+7. Stabilize a video using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](../docs/cuda.md)):
+
+    ```bash
+    python stabilize_video.py path/to/video/video.mp4 --gpu --save
     ```
 
 ## stabilize_boxes.py
@@ -138,6 +146,8 @@ python stabilize_boxes.py <input> [options]
 **Stabilo Configuration:**
 
 - `-cc CUSTOM_CONFIG`, `--custom-config CUSTOM_CONFIG`: Path to a config file that overrides the default stabilo parameters or the CLI arguments. See an [example config file](./custom.yaml).
+- `-g`, `--gpu`: Use CUDA GPU acceleration for feature detection, matching, and frame warping (default: False). Requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](../docs/cuda.md).
+- `-gid GPU_DEVICE_ID`, `--gpu-device-id GPU_DEVICE_ID`: CUDA device index to use when `--gpu` is set (default: 0).
 - [...] Most of the Stabilo parameters can be provided as command-line arguments. Examples include `--feature-type`, `--matcher-type`, and `--ransac-reproj-threshold`. For a complete list of parameters, refer to the argument parser options or the Stabilo documentation.
 
 ### Examples
@@ -170,4 +180,10 @@ python stabilize_boxes.py <input> [options]
 
     ```bash
     python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
+    ```
+
+6. Stabilize tracks using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](../docs/cuda.md)):
+
+    ```bash
+    python stabilize_boxes.py path/to/video.mp4 --gpu --save
     ```
