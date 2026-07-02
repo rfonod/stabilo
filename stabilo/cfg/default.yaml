@@ -50,6 +50,7 @@ akaze_threshold: 0.01  # AKAZE threshold; (0.0, inf]
 
 # Computation related
 gpu: false  # Use GPU for computation; [true, false]
+gpu_device_id: 0  # CUDA device index to use when gpu is true; [0, inf)
 
 # Miscellaneous
 viz: false  # Store features and matches for visualization; [true, false]

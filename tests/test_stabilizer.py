@@ -474,3 +474,70 @@ def test_match_quality_getters(images):
     num_ref_kpts, num_cur_kpts = stab.get_cur_num_keypoints()
     assert isinstance(num_ref_kpts, int)
     assert isinstance(num_cur_kpts, int)
+
+
+# ---------------------------------------------------------------------------
+# CUDA GPU path tests. Skipped unless a CUDA-enabled OpenCV build with a
+# visible device is available -- see docs/cuda.md for building one.
+# ---------------------------------------------------------------------------
+
+requires_cuda = pytest.mark.skipif(
+    cv2.cuda.getCudaEnabledDeviceCount() == 0,
+    reason="No CUDA-enabled OpenCV build / device available",
+)
+
+
+@requires_cuda
+@pytest.mark.parametrize('detector_name', sorted(Stabilizer.VALID_GPU_DETECTORS))
+def test_gpu_stabilize(detector_name, images):
+    """Each GPU-supported detector should produce a transformation matrix under gpu=True."""
+    cur_frame, ref_frame = images
+    stab = Stabilizer(detector_name=detector_name, gpu=True, downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+    stab.stabilize(cur_frame)
+    assert stab.cur_trans_matrix is not None
+
+
+@pytest.mark.parametrize('detector_name', sorted(set(Stabilizer.VALID_DETECTORS) - Stabilizer.VALID_GPU_DETECTORS))
+def test_gpu_unsupported_detector_raises(detector_name):
+    """Detectors without a CUDA implementation should fail validation, not raise AttributeError."""
+    with pytest.raises(ValueError, match=detector_name):
+        Stabilizer(detector_name=detector_name, gpu=True)
+
+
+@requires_cuda
+def test_gpu_warp_cur_frame(images):
+    cur_frame, ref_frame = images
+    stab = Stabilizer(gpu=True, downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+    stab.stabilize(cur_frame)
+    warped_frame = stab.warp_cur_frame()
+    assert warped_frame is not None
+    assert warped_frame.shape == cur_frame.shape
+
+
+@requires_cuda
+def test_gpu_vs_cpu_produce_comparable_results(images):
+    """Sanity check that the GPU path isn't silently broken (e.g. wrong keypoints).
+
+    Not a bit-exact comparison -- CUDA detector internals can order/round differently
+    from their CPU counterparts, so only a broad inlier-count sanity bound is checked.
+    """
+    cur_frame, ref_frame = images
+
+    stab_cpu = Stabilizer(gpu=False, downsample_ratio=1.0)
+    stab_cpu.set_ref_frame(ref_frame)
+    stab_cpu.stabilize(cur_frame)
+
+    stab_gpu = Stabilizer(gpu=True, downsample_ratio=1.0)
+    stab_gpu.set_ref_frame(ref_frame)
+    stab_gpu.stabilize(cur_frame)
+
+    assert stab_cpu.cur_trans_matrix is not None
+    assert stab_gpu.cur_trans_matrix is not None
+
+    cpu_inliers = stab_cpu.get_cur_inliers_count()
+    gpu_inliers = stab_gpu.get_cur_inliers_count()
+    assert cpu_inliers is not None and gpu_inliers is not None
+    assert gpu_inliers > 0
+    assert gpu_inliers >= cpu_inliers * 0.2

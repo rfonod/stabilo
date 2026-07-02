@@ -21,7 +21,9 @@ Key Features:
   - RANSAC-based algorithms for robust transformation matrix estimation.
   - CLAHE and pre-processing options for contrast enhancement.
   - Visualization and debugging features for keypoints, descriptors, and masks.
-  - GPU acceleration for improved performance (not implemented yet).
+  - Optional CUDA GPU acceleration (gpu=True) for feature detection, matching, and frame warping,
+    when built against a CUDA-enabled OpenCV. RANSAC-based transformation estimation has no OpenCV
+    CUDA equivalent and always runs on CPU. See docs/cuda.md for building such an OpenCV.
 
 Usage:
 1. Create an instance of the 'Stabilizer' class with desired parameter configurations.
@@ -30,6 +32,7 @@ Usage:
 4. Access stabilized frames, bounding boxes, and transformation matrices using specific methods.
 """
 
+import os
 import sys
 from pathlib import Path
 from typing import Union
@@ -48,8 +51,8 @@ ROOT = Path(__file__).resolve().parents[0]
 # Read the default parameters from a configuration file
 cfg = load_config(ROOT / "cfg" / "default.yaml", logger)
 
-# Profiling flag
-PROFILING = False
+# Profiling flag; set STABILO_PROFILE=1 to print per-call execution times
+PROFILING = bool(int(os.environ.get("STABILO_PROFILE", "0")))
 
 
 class Stabilizer:
@@ -61,6 +64,7 @@ class Stabilizer:
     """
 
     VALID_DETECTORS = ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze']
+    VALID_GPU_DETECTORS = {'orb'}
     VALID_MATCHERS = ['bf', 'flann']
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
@@ -102,7 +106,9 @@ class Stabilizer:
         - brisk_threshold: int - threshold for BRISK detector (used only if 'max_features -> threshold' model is unavailable)
         - kaze_threshold: float - threshold for KAZE detector (used only if 'max_features -> threshold' model is unavailable)
         - akaze_threshold: float - threshold for AKAZE detector (used only if 'max_features -> threshold' model is unavailable)
-        - gpu: bool - use GPU acceleration (not fully implemented/tested yet)
+        - gpu: bool - use CUDA GPU acceleration for detection/matching/warping; only detector_name in
+          VALID_GPU_DETECTORS is supported (see docs/cuda.md)
+        - gpu_device_id: int - CUDA device index to use when gpu=True (default 0)
         - viz: bool - save some features for visualization (e.g., keypoints, descriptors, masks)
         - benchmark: bool - different behavior for benchmarking purposes (e.g., re-use the last transformation if the current is None)
         - min_good_match_count_warning: int - min number of good matches to trigger a warning
@@ -110,11 +116,15 @@ class Stabilizer:
         """
         self._load_configuration(kwargs)
         self._validate_arguments()
+        if self.gpu:
+            cv2.cuda.setDevice(self.gpu_device_id)
         self._initialize_variables()
         self._create_feature_detectors()
         self._create_matcher()
         self._create_transformer()
         self._create_helpers()
+        if self.gpu:
+            self._create_gpu_buffers()
 
     def _load_configuration(self, kwargs):
         """
@@ -133,10 +143,14 @@ class Stabilizer:
         self.ref_mask, self.cur_mask = None, None
         self.ref_kpts, self.cur_kpts = None, None
         self.ref_desc, self.cur_desc = None, None
+        self.ref_desc_gpu = None
         self.ref_pts, self.cur_pts = None, None
         self.cur_trans_matrix, self.trans_matrix_last_known = None, None
         self.cur_inliers, self.cur_inliers_count = None, None
         self.h, self.w = None, None
+        self.gpu_stream = None
+        self._gpu_frame_buf, self._gpu_mask_buf = None, None
+        self._gpu_cur_desc_buf, self._gpu_warp_buf = None, None
 
     def _create_feature_detectors(self):
         """
@@ -272,13 +286,14 @@ class Stabilizer:
         """
         Create a brute-force matcher.
         """
-        return (
-            cv2.cuda.DescriptorMatcher_createBFMatcher(
-                self.norm_type, crossCheck=(True, False)[self.filter_type == 'ratio']
-            )
-            if self.gpu
-            else cv2.BFMatcher(self.norm_type, crossCheck=(True, False)[self.filter_type == 'ratio'])
-        )
+        if self.gpu:
+            if self.filter_type != 'ratio':
+                logger.warning(
+                    f"GPU brute-force matcher does not support crossCheck; matches will not be "
+                    f"mutually verified as they would be on CPU with filter_type='{self.filter_type}'."
+                )
+            return cv2.cuda.DescriptorMatcher_createBFMatcher(self.norm_type)
+        return cv2.BFMatcher(self.norm_type, crossCheck=(True, False)[self.filter_type == 'ratio'])
 
     def _create_flann_matcher(self):
         """
@@ -297,12 +312,14 @@ class Stabilizer:
 
     def _create_transformer(self):
         """
-        Create the transformation matrix estimator based on the provided configurations.
+        Create the transformation matrix estimator and frame warper based on the provided configurations.
         """
         if self.transformation_type == 'projective':
             self.transformer = cv2.findHomography
+            self.warper = cv2.cuda.warpPerspective if self.gpu else cv2.warpPerspective
         elif self.transformation_type == 'affine':
             self.transformer = cv2.estimateAffinePartial2D
+            self.warper = cv2.cuda.warpAffine if self.gpu else cv2.warpAffine
 
     def _create_helpers(self):
         """
@@ -315,6 +332,16 @@ class Stabilizer:
             else cv2.createCLAHE(clipLimit=1.0, tileGridSize=(8, 8))
         )
         self.resizer = cv2.cuda.resize if self.gpu else cv2.resize
+
+    def _create_gpu_buffers(self):
+        """
+        Create a persistent CUDA stream and reusable GpuMat buffers to avoid per-call allocation.
+        """
+        self.gpu_stream = cv2.cuda_Stream()
+        self._gpu_frame_buf = cv2.cuda_GpuMat()
+        self._gpu_mask_buf = cv2.cuda_GpuMat()
+        self._gpu_cur_desc_buf = cv2.cuda_GpuMat()
+        self._gpu_warp_buf = cv2.cuda_GpuMat()
 
     @timer(PROFILING)
     def set_ref_frame(self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh') -> None:
@@ -380,6 +407,12 @@ class Stabilizer:
 
         if is_reference:
             self.ref_kpts, self.ref_desc, self.ref_frame_gray = kpts, desc, frame_gray
+            if self.gpu and desc is not None:
+                self.ref_desc_gpu = cv2.cuda_GpuMat()
+                self.ref_desc_gpu.upload(desc, self.gpu_stream)
+                self.gpu_stream.waitForCompletion()
+            else:
+                self.ref_desc_gpu = None
         else:
             self.cur_kpts, self.cur_desc, self.cur_frame_gray = kpts, desc, frame_gray
 
@@ -407,28 +440,54 @@ class Stabilizer:
             return None, None, None
 
         if self.gpu:
-            frame = cv2.cuda_GpuMat(frame)
-            mask = cv2.cuda_GpuMat(mask) if mask is not None else None
+            self._gpu_frame_buf.upload(frame, self.gpu_stream)
+            frame = self._gpu_frame_buf
+            if mask is not None:
+                self._gpu_mask_buf.upload(mask, self.gpu_stream)
+                mask = self._gpu_mask_buf
+            frame = self.grayscale_converter(frame, cv2.COLOR_BGR2GRAY, stream=self.gpu_stream)
+        else:
+            frame = self.grayscale_converter(frame, cv2.COLOR_BGR2GRAY)
 
-        frame = self.grayscale_converter(frame, cv2.COLOR_BGR2GRAY)
         if self.clahe:
-            frame = self.claher.apply(frame)
+            frame = self.claher.apply(frame, stream=self.gpu_stream) if self.gpu else self.claher.apply(frame)
 
         frame_gray = frame if self.viz else None
 
         if self.downsample_ratio != 1.0:
-            frame = self.resizer(frame, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
-            mask = (
-                self.resizer(mask, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
-                if mask is not None
-                else None
-            )
+            if self.gpu:
+                frame = self.resizer(
+                    frame, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio, stream=self.gpu_stream
+                )
+                mask = (
+                    self.resizer(
+                        mask, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio, stream=self.gpu_stream
+                    )
+                    if mask is not None
+                    else None
+                )
+            else:
+                frame = self.resizer(frame, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
+                mask = (
+                    self.resizer(mask, (0, 0), fx=self.downsample_ratio, fy=self.downsample_ratio)
+                    if mask is not None
+                    else None
+                )
 
+        detector = self.detector_ref if ref_frame else self.detector_cur
         try:
-            kpts, desc = (self.detector_ref if ref_frame else self.detector_cur).detectAndCompute(frame, mask)
+            if self.gpu:
+                kpts_gpu, desc_gpu = detector.detectAndComputeAsync(frame, mask, stream=self.gpu_stream)
+                kpts = detector.convert(kpts_gpu)
+                desc = desc_gpu.download(stream=self.gpu_stream) if desc_gpu is not None else None
+            else:
+                kpts, desc = detector.detectAndCompute(frame, mask)
         except cv2.error as e:
             logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
             return None, None, None
+        finally:
+            if self.gpu:
+                self.gpu_stream.waitForCompletion()
 
         if self.detector_name == 'rsift':
             desc /= desc.sum(axis=1, keepdims=True) + self.rsift_eps
@@ -438,10 +497,8 @@ class Stabilizer:
             for kpt in kpts:
                 kpt.pt = (kpt.pt[0] / self.downsample_ratio, kpt.pt[1] / self.downsample_ratio)
 
-        if self.gpu:
-            kpts = self.detector_cur.convert(kpts)
-            desc = self.detector_cur.convert(desc)
-            frame_gray = frame.download(frame_gray)
+        if self.gpu and frame_gray is not None:
+            frame_gray = frame_gray.download()
 
         return kpts, desc, frame_gray
 
@@ -454,17 +511,40 @@ class Stabilizer:
             logger.warning("One of the descriptors is invalid.")
             return []
 
+        if self.gpu:
+            if desc1 is self.ref_desc:
+                desc1 = self.ref_desc_gpu
+            else:
+                self._gpu_cur_desc_buf.upload(desc1, self.gpu_stream)
+                desc1 = self._gpu_cur_desc_buf
+            if desc2 is self.ref_desc:
+                desc2 = self.ref_desc_gpu
+            else:
+                self._gpu_cur_desc_buf.upload(desc2, self.gpu_stream)
+                desc2 = self._gpu_cur_desc_buf
+
         try:
-            if self.filter_type == 'none':
-                good_matches = self.matcher.match(desc1, desc2, None)
-            elif self.filter_type == 'distance':
-                matches = self.matcher.match(desc1, desc2, None)
-                matches = sorted(matches, key=lambda x: x.distance)
-                min_dist, max_dist = matches[0].distance, matches[-1].distance
-                good_thresh = min_dist + (max_dist - min_dist) * self.filter_ratio
-                good_matches = [m for m in matches if m.distance <= good_thresh]
+            if self.filter_type in ('none', 'distance'):
+                if self.gpu:
+                    gpu_matches = self.matcher.matchAsync(desc1, desc2, stream=self.gpu_stream)
+                    self.gpu_stream.waitForCompletion()
+                    matches = self.matcher.matchConvert(gpu_matches)
+                else:
+                    matches = self.matcher.match(desc1, desc2, None)
+                if self.filter_type == 'none':
+                    good_matches = matches
+                else:
+                    matches = sorted(matches, key=lambda x: x.distance)
+                    min_dist, max_dist = matches[0].distance, matches[-1].distance
+                    good_thresh = min_dist + (max_dist - min_dist) * self.filter_ratio
+                    good_matches = [m for m in matches if m.distance <= good_thresh]
             elif self.filter_type == 'ratio':
-                matches = self.matcher.knnMatch(desc1, desc2, k=2)
+                if self.gpu:
+                    gpu_matches = self.matcher.knnMatchAsync(desc1, desc2, 2, stream=self.gpu_stream)
+                    self.gpu_stream.waitForCompletion()
+                    matches = self.matcher.knnMatchConvert(gpu_matches)
+                else:
+                    matches = self.matcher.knnMatch(desc1, desc2, k=2)
                 good_matches = []
                 for pair in matches:
                     if len(pair) == 2:
@@ -678,10 +758,13 @@ class Stabilizer:
         if self.cur_trans_matrix is None:
             logger.warning("Transformation matrix is None.")
             return frame
-        if self.transformation_type == 'projective':
-            return cv2.warpPerspective(frame, self.cur_trans_matrix, (self.w, self.h))
-        elif self.transformation_type == 'affine':
-            return cv2.warpAffine(frame, self.cur_trans_matrix, (self.w, self.h))
+        if self.gpu:
+            self._gpu_warp_buf.upload(frame, self.gpu_stream)
+            warped = self.warper(self._gpu_warp_buf, self.cur_trans_matrix, (self.w, self.h), stream=self.gpu_stream)
+            warped = warped.download(stream=self.gpu_stream)
+            self.gpu_stream.waitForCompletion()
+            return warped
+        return self.warper(frame, self.cur_trans_matrix, (self.w, self.h))
 
     def transform_cur_boxes(self, out_box_format: str = 'xywh') -> Union[np.ndarray, None]:
         """
@@ -842,6 +925,11 @@ class Stabilizer:
         """
         if self.detector_name not in self.VALID_DETECTORS:
             raise ValueError(f"Invalid detector: {self.detector_name}. Choose from {self.VALID_DETECTORS}")
+        if self.gpu and self.detector_name not in self.VALID_GPU_DETECTORS:
+            raise ValueError(
+                f"detector '{self.detector_name}' has no CUDA implementation; gpu=True supports only "
+                f"{sorted(self.VALID_GPU_DETECTORS)}. See docs/cuda.md."
+            )
         if self.matcher_name not in self.VALID_MATCHERS:
             raise ValueError(f"Invalid matcher: {self.matcher_name}. Choose from {self.VALID_MATCHERS}")
         if self.filter_type not in self.VALID_FILTER_TYPES:
@@ -872,5 +960,9 @@ class Stabilizer:
             raise ValueError("Invalid ransac_epipolar_threshold. It should be greater than 0")
         if not (0.0 < self.ransac_confidence <= 1.0):
             raise ValueError("Invalid ransac_confidence. It should be in the range (0.0, 1.0]")
-        if self.gpu and not cv2.cuda.getCudaEnabledDeviceCount():
-            raise ValueError("GPU is enabled but no CUDA-enabled device was found")
+        if self.gpu:
+            device_count = cv2.cuda.getCudaEnabledDeviceCount()
+            if not device_count:
+                raise ValueError("GPU is enabled but no CUDA-enabled device was found")
+            if not (0 <= self.gpu_device_id < device_count):
+                raise ValueError(f"Invalid gpu_device_id: {self.gpu_device_id}. Choose from range [0, {device_count})")

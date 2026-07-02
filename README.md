@@ -1,10 +1,12 @@
 # Stabilo
 
-[![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![PyPI - Total Downloads](https://img.shields.io/pepy/dt/stabilo?label=total%20downloads)](https://pepy.tech/project/stabilo) [![PyPI - Downloads per Month](https://img.shields.io/pypi/dm/stabilo?color=%234c1)](https://pypi.org/project/stabilo/) [![CI](https://github.com/rfonod/stabilo/actions/workflows/ci.yml/badge.svg)](https://github.com/rfonod/stabilo/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.9--3.13-blue)](https://www.python.org/) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![GitHub Issues](https://img.shields.io/github/issues/rfonod/stabilo)](https://github.com/rfonod/stabilo/issues) [![Open Access](https://img.shields.io/badge/Journal-10.1016%2Fj.trc.2025.105205-blue)](https://doi.org/10.1016/j.trc.2025.105205) [![arXiv](https://img.shields.io/badge/arXiv-2411.02136-b31b1b.svg)](https://arxiv.org/abs/2411.02136) [![Archived Code](https://img.shields.io/badge/Zenodo-Software%20Archive-blue)](https://zenodo.org/doi/10.5281/zenodo.12117092)
+[![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![PyPI - Total Downloads](https://img.shields.io/pepy/dt/stabilo?label=total%20downloads)](https://pepy.tech/project/stabilo) [![PyPI - Downloads per Month](https://img.shields.io/pypi/dm/stabilo?color=%234c1)](https://pypi.org/project/stabilo/) [![CI](https://github.com/rfonod/stabilo/actions/workflows/ci.yml/badge.svg)](https://github.com/rfonod/stabilo/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.9--3.13-blue)](https://www.python.org/) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![GitHub Issues](https://img.shields.io/github/issues/rfonod/stabilo)](https://github.com/rfonod/stabilo/issues) [![Open Access](https://img.shields.io/badge/Journal-10.1016%2Fj.trc.2025.105205-blue)](https://doi.org/10.1016/j.trc.2025.105205) [![arXiv](https://img.shields.io/badge/arXiv-2411.02136-b31b1b.svg)](https://arxiv.org/abs/2411.02136) [![Archived Code](https://img.shields.io/badge/Zenodo-Software%20Archive-blue)](https://zenodo.org/doi/10.5281/zenodo.12117092) [![YouTube](https://img.shields.io/badge/YouTube-Video-red?logo=youtube&logoColor=red)](https://youtu.be/BGEZCEe6yHw)
 
 **Stabilo** is a specialized Python package for stabilizing video frames or tracked object trajectories in videos, using robust homography or affine transformations. Its core functionality focuses on aligning each frame or object track to a chosen reference frame, enabling precise stabilization that mitigates disturbances like camera movements. Key features include robust keypoint-based image registration and the option to integrate user-defined masks, which exclude dynamic regions (e.g., moving objects) to enhance stabilization accuracy. Integrating seamlessly with object detection and tracking algorithms, Stabilo is ideal for high-precision applications like urban traffic monitoring, as demonstrated in the [Geo-trax](https://github.com/rfonod/geo-trax) 🚀 trajectory extraction framework. Extensive transformation and enhancement options, including multiple feature detectors and matchers, masking techniques, further expand its utility. For systematic evaluation and hyperparameter tuning, the companion tool [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 provides a dedicated benchmarking framework. The repository also includes valuable resources like utility scripts and example videos to demonstrate its capabilities.
 
-![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/v1.2.3/assets/stabilo_visualization.webp)
+![Stabilization Visualization](https://raw.githubusercontent.com/rfonod/stabilo/main/assets/stabilo_visualization.webp)
+
+🎬 An accelerated preview of Stabilo's capabilities. Watch the full 14-second 4K demo on [YouTube](https://youtu.be/BGEZCEe6yHw).
 
 ## Features
 
@@ -12,6 +14,7 @@
 - **Trajectory Stabilization**: Transform object trajectories (e.g., bounding boxes) to a common fixed reference frame using homography or affine transformations.
 - **User-Defined Masks**: Allow users to specify custom masks to exclude regions of interest during stabilization, supporting axis-aligned boxes, oriented bounding boxes (OBBs), four-point boxes, polygonal masks, and circular masks.
 - **Wide Range of Algorithms**: Includes support for various feature detectors (ORB, SIFT, RSIFT, BRISK, KAZE, AKAZE), matchers (BF, FLANN), RANSAC algorithms (MAGSAC++, DEGENSAC, ...), transformation types, and pre-processing options.
+- **Optional CUDA GPU Acceleration**: Feature detection, matching, and frame warping can run on an NVIDIA GPU (`gpu=True`) when built against a CUDA-enabled OpenCV; see [`docs/cuda.md`](docs/cuda.md) for build instructions. RANSAC-based transformation estimation always runs on CPU (no OpenCV CUDA equivalent exists).
 - **Customizable Parameters**: Fine-tune the stabilization by adjusting parameters such as the number of keypoints, RANSAC parameters, matching thresholds, downsampling factors, etc..
 - **Visualization Tools**: Generate visualizations of the stabilization process, with frame-by-frame comparisons and trajectory transformations (see the above animation).
 - **Threshold Analysis**: Analyze the relationship between detection thresholds and keypoint counts for BRISK, KAZE, and AKAZE to fairly benchmark with different detectors.
@@ -20,7 +23,7 @@
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
-- **GPU Acceleration**: Integration of GPU acceleration to improve processing speed.
+- **Deep Learning-Based Feature Detectors**: Adding support for learned feature detectors and descriptors (e.g., SuperPoint) as alternatives to the classical detectors.
 - **Bi-directional Matching**: Implementing bi-directional matching to enhance the robustness of keypoint matching.
 - **Additional Feature Detectors**: Adding support for more feature detectors and matchers to provide users with a wider range of options for stabilization.
 
@@ -197,11 +200,11 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = jun,
+      month = jul,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.2.3},
+      version = {1.3.0},
       year = {2026}
     }
     ```

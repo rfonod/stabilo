@@ -1,6 +1,8 @@
 # Stabilo — Detailed Usage Guide
 
 > **Utility scripts** are also available to demonstrate Stabilo in practice. See the [`scripts/README.md`](../scripts/README.md) for full documentation of `stabilize_video.py`, `stabilize_boxes.py`, and the threshold-analysis tooling.
+>
+> **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions.
 
 ---
 
@@ -300,7 +302,8 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `brisk_threshold` | `130` | `(0, 255]` | BRISK detector threshold (fallback) |
 | `kaze_threshold` | `0.01` | `> 0` | KAZE detector threshold (fallback) |
 | `akaze_threshold` | `0.01` | `> 0` | AKAZE detector threshold (fallback) |
-| `gpu` | `false` | `true`, `false` | Use CUDA GPU acceleration (experimental) |
+| `gpu` | `false` | `true`, `false` | Use CUDA GPU acceleration for detection/matching/warping; requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](cuda.md) |
+| `gpu_device_id` | `0` | `>= 0` (int) | CUDA device index to use when `gpu` is true |
 | `viz` | `false` | `true`, `false` | Retain intermediate data for visualisation |
 | `benchmark` | `false` | `true`, `false` | Benchmarking mode (see section 13) |
 | `min_good_match_count_warning` | `20` | `>= 0` | Warn if fewer than N good matches found |

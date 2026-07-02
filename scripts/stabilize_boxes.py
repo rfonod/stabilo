@@ -63,6 +63,8 @@ Stabilo Configuration:
     --ransac-max-iter RANSAC_MAX_ITER : RANSAC maximum iterations (default: 5000).
     --ransac-confidence RANSAC_CONFIDENCE : RANSAC confidence (default: 0.999999).
     --mask-margin-ratio MASK_MARGIN_RATIO : Mask margin ratio (default: 0.15).
+    --gpu              : Use CUDA GPU acceleration (requires a CUDA-enabled OpenCV, see docs/cuda.md) (default: False).
+    --gpu-device-id GPU_DEVICE_ID : CUDA device index to use when --gpu is set (default: 0).
 
 Examples:
     1. Stabilize the tracks (BBs) using the default stabilo parameters and a custom reference frame at index 100:
@@ -75,6 +77,8 @@ Examples:
         python stabilize_boxes.py path/to/video.mp4 --save --custom-config path/to/config.yaml --mask-path path/to/mask.txt
     5. Stabilize the tracks using a custom config file and save the visualization with custom tail length and radius:
         python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
+    6. Stabilize the tracks using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see docs/cuda.md):
+        python stabilize_boxes.py path/to/video.mp4 --gpu --save
 
 Notes:
     - Press 'q' to quit the real-time visualization (--viz option).
@@ -327,6 +331,8 @@ def get_cli_arguments():
     parser.add_argument("--ransac-max-iter", "-rmi", type=int, help="RANSAC maximum iterations [default: 5000]")
     parser.add_argument("--ransac-confidence", "-rc", type=float, help="RANSAC confidence [default: 0.999999]")
     parser.add_argument("--mask-margin-ratio", "-mmr", type=float, help="mask margin ratio [default: 0.15]")
+    parser.add_argument("--gpu", "-g", action="store_true", help="use CUDA GPU acceleration [default: False]")
+    parser.add_argument("--gpu-device-id", "-gid", type=int, help="CUDA device index when --gpu is set [default: 0]")
 
     cli_args = parser.parse_args()
 
