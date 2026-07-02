@@ -81,7 +81,7 @@
     },
     {
       "identifier": "https://github.com/rfonod/hbb2obb/",
-      "relation": "isRelatedTo",
+      "relation": "references",
       "resource_type": "software"
     }
   ]
