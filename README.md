@@ -21,6 +21,7 @@
 <details>
 <summary><b>🚀 Planned Enhancements</b></summary>
 
+- **Deep Learning-Based Feature Detectors**: Adding support for learned feature detectors and descriptors (e.g., SuperPoint) as alternatives to the classical detectors.
 - **Bi-directional Matching**: Implementing bi-directional matching to enhance the robustness of keypoint matching.
 - **Additional Feature Detectors**: Adding support for more feature detectors and matchers to provide users with a wider range of options for stabilization.
 
@@ -197,11 +198,11 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = jun,
+      month = jul,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.2.3},
+      version = {1.3.0},
       year = {2026}
     }
     ```
