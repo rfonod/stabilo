@@ -6,15 +6,20 @@ This guide is a distilled, stabilo-specific path through a general build process
 
 ## Table of Contents
 
-- [1. Why a Source Build Is Required](#1-why-a-source-build-is-required)
-- [2. What Gets CUDA-Accelerated in Stabilo](#2-what-gets-cuda-accelerated-in-stabilo)
-- [3. Prerequisites](#3-prerequisites)
-- [4. Recommended Build: OpenCV 5.0.0 via the `opencv-python` Build System](#4-recommended-build-opencv-500-via-the-opencv-python-build-system)
-- [5. Verifying the Build](#5-verifying-the-build)
-- [6. Installing Stabilo on Top](#6-installing-stabilo-on-top)
-- [7. Enabling GPU Mode in Stabilo](#7-enabling-gpu-mode-in-stabilo)
-- [8. Performance Notes](#8-performance-notes)
-- [9. Troubleshooting](#9-troubleshooting)
+- [Stabilo — Building OpenCV with CUDA Support](#stabilo--building-opencv-with-cuda-support)
+  - [Table of Contents](#table-of-contents)
+  - [1. Why a Source Build Is Required](#1-why-a-source-build-is-required)
+  - [2. What Gets CUDA-Accelerated in Stabilo](#2-what-gets-cuda-accelerated-in-stabilo)
+  - [3. Prerequisites](#3-prerequisites)
+  - [4. Recommended Build: OpenCV 5.0.0 via the `opencv-python` Build System](#4-recommended-build-opencv-500-via-the-opencv-python-build-system)
+    - [4.1 Pinning the OpenCV version (submodules) — and making the pin stick](#41-pinning-the-opencv-version-submodules--and-making-the-pin-stick)
+    - [4.2 CUDA 13.x pre-flight check (skip on CUDA 12.x)](#42-cuda-13x-pre-flight-check-skip-on-cuda-12x)
+    - [4.3 Configure and build](#43-configure-and-build)
+  - [5. Verifying the Build](#5-verifying-the-build)
+  - [6. Installing Stabilo on Top](#6-installing-stabilo-on-top)
+  - [7. Enabling GPU Mode in Stabilo](#7-enabling-gpu-mode-in-stabilo)
+  - [8. Performance Notes](#8-performance-notes)
+  - [9. Troubleshooting](#9-troubleshooting)
 
 ---
 
@@ -56,6 +61,8 @@ So `Stabilizer(gpu=True)` will raise `ValueError: GPU is enabled but no CUDA-ena
   ```
   If that already prints a version, confirm it's usable before installing anything: the toolkit version must be **≤** the "CUDA Version: X.Y" figure `nvidia-smi` reports (drivers are backward-compatible with older toolkits, not forward-compatible with newer ones), and it must be new enough to know about the GPU's architecture (recent GPUs, e.g. Ada Lovelace/RTX 40-series, need CUDA ≥ 11.8; older GPUs work with any reasonably recent toolkit). If both hold, the existing `nvcc` is fine, skip ahead to [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system).
 
+  **CUDA Toolkit 13.x note.** CUDA 13 ships CCCL 3.x (the merged libcu++/Thrust/CUB), which removed several internal macros that older OpenCV/`opencv_contrib` releases still use, most visibly `_LIBCUDACXX_BEGIN_NAMESPACE_STD` in `opencv_contrib`'s `cudev` headers. Any pinned OpenCV/contrib version that predates the corresponding fix fails compilation of the *very first* CUDA source file with ~100 cascading errors rooted in `cudev/ptr2d/zip.hpp`. Section 4 includes a pre-flight check and a one-line patch for this; the corresponding failure signature is in [Section 9](#9-troubleshooting). CUDA 12.x toolkits are unaffected.
+
   If `nvcc --version` fails with "command not found", or the version check above fails, install it:
   - **Ubuntu/Debian, simplest option (distro package, no extra repo setup):**
     ```bash
@@ -78,6 +85,8 @@ So `Stabilizer(gpu=True)` will raise `ValueError: GPU is enabled but no CUDA-ena
     sudo apt-get install -y gcc-12 g++-12
     ```
     Note the path to the alternate compiler (`/usr/bin/g++-12` above, adjust the version number to whatever was installed). [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system) has a `HOST_COMPILER_FLAG` variable to set it in; it's kept separate from the rest of `CMAKE_ARGS` there specifically so this doesn't require hand-editing a long multi-line string in the shell. That variable sets both `CUDA_HOST_COMPILER` and `CMAKE_CUDA_HOST_COMPILER`: OpenCV's CUDA modules mix CMake's legacy `FindCUDA.cmake` module (reads `CUDA_HOST_COMPILER`) and modern native CUDA language support (reads `CMAKE_CUDA_HOST_COMPILER`) depending on the module, and only one of the two takes effect for a given `.cu` file, so setting both covers either case without needing to know which path a specific module uses.
+
+    **Also check what the *default* `c++`/`cc` point to** (`c++ --version`), not just `gcc --version`: on machines where `update-alternatives` has been used, the default can be an unexpectedly old compiler (e.g. GCC 9 on Ubuntu 24.04). The host-compiler flags above only steer `.cu` compilation; the bulk of OpenCV's C++ code still uses the default. Mixing a very old default C++ compiler with a newer nvcc host compiler generally links fine (same libstdc++ ABI), but it's cleaner to put everything on one toolchain. `HOST_COMPILER_FLAG` in Section 4 therefore has an optional second line adding `-DCMAKE_C_COMPILER`/`-DCMAKE_CXX_COMPILER` for exactly this case.
   - Windows: Visual Studio Build Tools, matching the MSVC version supported by the CUDA Toolkit in use (same NVIDIA installation guide has the compatibility table).
 - CMake (recent version; the OpenCV 5.x build requires a fairly modern CMake). Check with `cmake --version`; if the distro's package is old, install a newer one via `pip install cmake` or from [cmake.org](https://cmake.org/download/).
 - Python build tooling: `pip install --upgrade pip` (>= 19.3), plus `numpy`.
@@ -107,11 +116,70 @@ pip install --upgrade pip numpy
 
 git clone --recursive https://github.com/opencv/opencv-python.git
 cd opencv-python
-
-# Pin both submodules to the OpenCV 5.0.0 release
-git -C opencv checkout 5.0.0
-git -C opencv_contrib checkout 5.0.0
 ```
+
+### 4.1 Pinning the OpenCV version (submodules) — and making the pin stick
+
+Two things about this repo's layout that are easy to trip over:
+
+1. **The wrapper repo's own tags are internal build numbers (`86`, `88`, `93`, ...), not OpenCV versions.** `git tag` in the `opencv-python` checkout will not show `5.0.0`; the OpenCV version tags live inside the `opencv` and `opencv_contrib` *submodules*. Also, a brand-new OpenCV release may exist as a tag in the submodules before the wrapper repo has moved its recorded submodule pointers to it — pinning the submodules manually (below) covers that case.
+
+2. **A bare `git -C opencv checkout <ref>` does not survive the build.** `pip`'s build hooks run `git submodule sync` + `git submodule update --init --recursive` on *every* invocation of `pip wheel .`, which resets both submodules to whatever SHAs the wrapper repo has committed — silently undoing any manual checkout. The build then proceeds against the wrapper's recorded (possibly much older) OpenCV version without any error. The fix is to record the new submodule SHAs with a local throwaway commit; `git submodule update` then becomes a no-op.
+
+```bash
+# Pin both submodules to the OpenCV 5.0.0 release
+git -C opencv fetch --tags && git -C opencv checkout 5.0.0
+git -C opencv_contrib fetch --tags && git -C opencv_contrib checkout 5.0.0
+
+# REQUIRED: commit the new submodule pointers so pip's `git submodule update`
+# can't revert them. Local throwaway commit; identity flags avoid needing global git config.
+git add opencv opencv_contrib
+git -c user.name=local -c user.email=local@local commit -m "Pin submodules to 5.0.0"
+```
+
+To pin to a branch head instead of a release tag (e.g. `origin/4.x` / `origin/5.x` to pick up post-release fixes that haven't been tagged yet, such as the CUDA 13 compatibility fixes):
+
+```bash
+git -C opencv fetch origin && git -C opencv checkout origin/4.x
+git -C opencv_contrib fetch origin && git -C opencv_contrib checkout origin/4.x
+git add opencv opencv_contrib
+git -c user.name=local -c user.email=local@local commit -m "Pin submodules to 4.x heads"
+```
+
+Either way, **verify the pin took effect** when the build starts: the CMake configure output prints a banner like `General configuration for OpenCV 5.0.0` within the first minute. If it names a different version — or the log shows `Submodule path 'opencv': checked out '<some other sha>'` right at the start — the commit step above was skipped and pip reverted the checkout; stop the build rather than waiting 40 minutes for the wrong version.
+
+### 4.2 CUDA 13.x pre-flight check (skip on CUDA 12.x)
+
+If `nvcc --version` reports CUDA 13.x, check whether the pinned `opencv_contrib` contains the CCCL 3.x fix before starting the build:
+
+```bash
+grep -n '_LIBCUDACXX' opencv_contrib/modules/cudev/include/opencv2/cudev/ptr2d/zip.hpp
+```
+
+No output → the fix is in, continue to 4.3. If it prints matches (two lines, `_LIBCUDACXX_BEGIN_NAMESPACE_STD` and `_LIBCUDACXX_END_NAMESPACE_STD`), the build **will** fail on the first `.cu` file (see [Section 9](#9-troubleshooting) for the failure signature). Patch it — CUDA 13's libcu++ removed those macros, and the enclosed `tuple_size`/`tuple_element` specializations need to live in an explicit `cuda::std` namespace instead:
+
+```bash
+sed -i \
+  -e 's/^_LIBCUDACXX_BEGIN_NAMESPACE_STD$/namespace cuda { namespace std {/' \
+  -e 's/^_LIBCUDACXX_END_NAMESPACE_STD$/}}/' \
+  opencv_contrib/modules/cudev/include/opencv2/cudev/ptr2d/zip.hpp
+
+# Sanity-check the edit: the tuple_size/tuple_element specializations should now sit
+# inside an explicit `namespace cuda { namespace std { ... }}` block.
+grep -n -A2 'namespace cuda { namespace std {' \
+  opencv_contrib/modules/cudev/include/opencv2/cudev/ptr2d/zip.hpp
+
+# Commit the patch inside the submodule, then re-pin the wrapper repo — same reason
+# as 4.1: without both commits, pip's `git submodule update` discards the patch.
+git -C opencv_contrib add -A
+git -C opencv_contrib -c user.name=local -c user.email=local@local commit -m "Fix cudev zip.hpp for CUDA 13 CCCL 3.x"
+git add opencv_contrib
+git -c user.name=local -c user.email=local@local commit -m "Pin patched contrib"
+```
+
+Verified working against OpenCV/contrib `4.x` heads with CUDA 13.3 (compute capability 8.9), Ubuntu 24.04, GCC 12 host compiler. Later OpenCV releases are expected to include this fix upstream, at which point the `grep` above simply comes back empty and no patch is needed.
+
+### 4.3 Configure and build
 
 Detect the GPU's compute capability and build the CMake flags from it. `HOST_COMPILER_FLAG` is a separate variable specifically so nothing needs to be hand-edited into the middle of the longer `CMAKE_ARGS` string below: leave it empty if [Section 3](#3-prerequisites) found the default compiler already compatible, otherwise set it to the one line shown (commented out) with the path noted there.
 
@@ -125,6 +193,11 @@ HOST_COMPILER_FLAG=""
 # (reads CUDA_HOST_COMPILER) and modern native CUDA language support (reads CMAKE_CUDA_HOST_COMPILER)
 # depending on the specific module, and only one of the two takes effect for a given .cu file.
 # HOST_COMPILER_FLAG="-DCUDA_HOST_COMPILER=/usr/bin/g++-12 -DCMAKE_CUDA_HOST_COMPILER=/usr/bin/g++-12"
+#
+# Optionally also put the plain C/C++ compilation on the same toolchain — recommended
+# when the machine's default `c++` is a different major version than the nvcc host
+# compiler (check with `c++ --version`; see the Section 3 note on update-alternatives):
+# HOST_COMPILER_FLAG="$HOST_COMPILER_FLAG -DCMAKE_C_COMPILER=/usr/bin/gcc-12 -DCMAKE_CXX_COMPILER=/usr/bin/g++-12"
 
 export ENABLE_CONTRIB=1
 export CMAKE_ARGS="-DWITH_CUDA=ON -DCUDA_ARCH_BIN=${CUDA_ARCH} ${HOST_COMPILER_FLAG} \
@@ -132,7 +205,7 @@ export CMAKE_ARGS="-DWITH_CUDA=ON -DCUDA_ARCH_BIN=${CUDA_ARCH} ${HOST_COMPILER_F
   -DBUILD_TESTS=OFF -DBUILD_PERF_TESTS=OFF -DBUILD_EXAMPLES=OFF -DBUILD_DOCS=OFF"
 ```
 
-`BUILD_LIST` restricts the contrib build to only the modules stabilo needs (see [Section 2](#2-what-gets-cuda-accelerated-in-stabilo)) instead of compiling all ~60 `opencv_contrib` modules, several of which pull in dependencies unrelated to stabilo's GPU requirements (VTK, Eigen, Atlas/BLAS/LAPACK, etc.) that a typical build machine won't have installed. **If `BUILD_LIST` causes a "module not found" or missing-dependency CMake error**, drop the `-DBUILD_LIST=...` flag entirely and let it build full `opencv_contrib` instead: slower (potentially 1-2+ hours) but a safe superset that sidesteps any module-naming mismatch for a given OpenCV version.
+`BUILD_LIST` restricts the contrib build to only the modules stabilo needs (see [Section 2](#2-what-gets-cuda-accelerated-in-stabilo)) instead of compiling all ~60 `opencv_contrib` modules, several of which pull in dependencies unrelated to stabilo's GPU requirements (VTK, Eigen, Atlas/BLAS/LAPACK, etc.) that a typical build machine won't have installed. The list above works for both the 5.0.0 tag and the 4.x branch heads (OpenCV 4.13+ already uses the renamed `features` module; on much older 4.x pins, `features` may need to be `features2d`). **If `BUILD_LIST` causes a "module not found" or missing-dependency CMake error**, drop the `-DBUILD_LIST=...` flag entirely and let it build full `opencv_contrib` instead: slower (potentially 1-2+ hours) but a safe superset that sidesteps any module-naming mismatch for a given OpenCV version.
 
 On Windows PowerShell, the equivalent:
 
@@ -154,15 +227,15 @@ $env:CMAKE_ARGS = "-DWITH_CUDA=ON -DCUDA_ARCH_BIN=$CUDA_ARCH $HostCompilerFlag -
 ```bash
 rm -rf _skbuild
 ```
-`pip` creates a brand-new temporary build-isolation environment (`/tmp/pip-build-env-XXXXX/`) on *every* `pip wheel .` invocation, including the one that provides NumPy's headers to the build, and deletes it once that invocation ends. CMake caches whatever it detects on a given configure (the CUDA host compiler, NumPy's include path, etc.) in `_skbuild/<platform>/cmake-build/CMakeCache.txt` and does not reliably re-detect those values on a later incremental configure, even when the underlying value (like that temp directory) no longer exists. A stale cache pointing at a deleted temp directory produces confusing failures far removed from the actual cause (a "missing" file that was never actually missing, just relocated by the next pip invocation), so it's not worth trying to reason about which specific retry needs a clean tree: always wipe it. This does mean a retry takes the full build time again rather than resuming.
+`pip` creates a brand-new temporary build-isolation environment (`/tmp/pip-build-env-XXXXX/`) on *every* `pip wheel .` invocation, including the one that provides NumPy's headers to the build, and deletes it once that invocation ends. CMake caches whatever it detects on a given configure (the CUDA host compiler, NumPy's include path, etc.) in `_skbuild/<platform>/cmake-build/CMakeCache.txt` and does not reliably re-detect those values on a later incremental configure, even when the underlying value (like that temp directory) no longer exists. A stale cache pointing at a deleted temp directory produces confusing failures far removed from the actual cause (a "missing" file that was never actually missing, just relocated by the next pip invocation), so it's not worth trying to reason about which specific retry needs a clean tree: always wipe it. This does mean a retry takes the full build time again rather than resuming. The same applies after changing the submodule pin (4.1) or applying the header patch (4.2): stale caches across OpenCV versions cause unrelated-looking configure errors.
 
-Build and install the wheel:
+Build and install the wheel (`tee` keeps a searchable copy of the very long build log — `grep -m5 'error:' build.log` beats scrolling if something fails):
 
 ```bash
-pip wheel . --verbose
+pip wheel . --verbose 2>&1 | tee build.log
 pip install opencv_contrib_python-*.whl
 ```
-If the shell reports no match for that wildcard (e.g. zsh's "no matches found"), the build above did not produce a wheel; scroll up through its output to find the actual error rather than treating the missing file as the problem itself.
+If the shell reports no match for that wildcard (e.g. zsh's "no matches found"), the build above did not produce a wheel; search `build.log` for the actual error rather than treating the missing file as the problem itself.
 
 This can take anywhere from ~15 minutes to over an hour depending on the hardware; the `BUILD_LIST`/`BUILD_TESTS`/`BUILD_PERF_TESTS`/`BUILD_EXAMPLES`/`BUILD_DOCS` flags above cut this down significantly relative to a full default build. A clean rebuild after `rm -rf _skbuild` takes the full time again, since nothing is cached.
 
@@ -176,13 +249,14 @@ Run this from *outside* the `opencv-python` checkout directory (`cd ~` or anywhe
 python -c "
 import cv2
 print(cv2.__file__)
+print(cv2.__version__)
 print('CUDA devices:', cv2.cuda.getCudaEnabledDeviceCount())
 info = cv2.getBuildInformation()
 print([l for l in info.splitlines() if 'CUDA' in l or 'cuda' in l.lower()])
 "
 ```
 
-There should be at least one CUDA device, and `cudev`/`cudafeatures2d`/`cudawarping`/`cudaimgproc`/`cudafilters`/`cudaarithm` listed among the enabled modules. Then check which of stabilo's detectors the build actually exposes on the GPU. This scans every attribute under `cv2.cuda` rather than checking a fixed `*_create` name list, since a detector's CUDA class might not follow that exact naming convention:
+Confirm `cv2.__version__` matches the version pinned in [Section 4.1](#41-pinning-the-opencv-version-submodules--and-making-the-pin-stick) (an unexpected version here means the submodule pin didn't stick; see Section 9). There should be at least one CUDA device, and `cudev`/`cudafeatures2d`/`cudawarping`/`cudaimgproc`/`cudafilters`/`cudaarithm` listed among the enabled modules. Then check which of stabilo's detectors the build actually exposes on the GPU. This scans every attribute under `cv2.cuda` rather than checking a fixed `*_create` name list, since a detector's CUDA class might not follow that exact naming convention:
 
 ```bash
 python -c "
@@ -278,25 +352,28 @@ awk '{sum[$1]+=$(NF-1); n[$1]++} END {for (s in sum) printf "%-35s avg %8.2f ms 
 
 ## 9. Troubleshooting
 
-- **`AttributeError: module 'cv2' has no attribute 'cuda'` (or any other unexpected missing attribute) even though the build reported success.** Check `cv2.__file__` first. If it points inside the `opencv-python` checkout directory (e.g. `.../opencv-python/cv2/__init__.py`) rather than into `.venv-cuda/lib/pythonX.Y/site-packages/cv2/__init__.py`, Python imported that checkout's own tracked `cv2/` packaging-template directory instead of the actually-installed package, because the current directory is checked before site-packages and the checkout happens to contain a same-named folder. Re-run from any other directory (`cd ~` first) rather than from inside the `opencv-python` checkout. See the note in [Section 5](#5-verifying-the-build).
+- **`CMake Error: CUDA: OpenCV requires enabled 'cudev' module from 'opencv_contrib'`.** The build ran with `WITH_CUDA=ON` but without `ENABLE_CONTRIB=1`. This is mandatory, not optional; see [Section 1](#1-why-a-source-build-is-required)/[Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system). Set `export ENABLE_CONTRIB=1` before `pip wheel .`.
+- **CMake can't find `nvcc` / CUDA compiler.** Ensure the CUDA Toolkit's `bin` directory is on `PATH` (Linux: `/usr/local/cuda/bin`) before running `pip wheel .`.
+- **`nvcc` rejects the host compiler ("unsupported GNU version" or similar), including after setting `HOST_COMPILER_FLAG`.** Three distinct causes, in the order to check them:
+  1. **Wrong variable name for the code path in use.** OpenCV's CUDA modules mix CMake's legacy `FindCUDA.cmake` module (reads `CUDA_HOST_COMPILER`) and modern native CUDA language support (reads `CMAKE_CUDA_HOST_COMPILER`), and only one of the two is read for a given `.cu` file. A build log with file names like `..._generated_gpu_mat.cu.o` and a `*.cu.o.Release.cmake` wrapper script is the signature of the legacy `FindCUDA.cmake` path, meaning `CUDA_HOST_COMPILER` (no `CMAKE_` prefix) is the variable that matters there, not `CMAKE_CUDA_HOST_COMPILER`. `HOST_COMPILER_FLAG` in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system) sets both, so this shouldn't come up when following these instructions as written, but it's the first thing to check if it was set by hand.
+  2. **Missing `-D` prefix.** Check the CMake configure log for a line like `CMake Warning: Ignoring extra path from command line: "DCMAKE_CUDA_HOST_COMPILER=..."` (or `DCUDA_HOST_COMPILER=...`): that means the `-D` was dropped somewhere, commonly from editing the `CMAKE_ARGS` string by hand instead of using the separate `HOST_COMPILER_FLAG` variable, so the flag was silently discarded rather than applied.
+  3. **Stale build cache.** CMake detects and caches the CUDA host compiler the first time it configures a given build directory, and reuses that cached detection on later configures regardless of a changed `CMAKE_ARGS`, even once the variable name and formatting are both correct. Remove the cached build tree and rebuild, per the note in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system): `rm -rf _skbuild` from the `opencv-python` checkout root, then `pip wheel .` again.
+- **~100 CUDA compile errors on the very first `.cu` file, rooted in `opencv_contrib/modules/cudev/include/opencv2/cudev/ptr2d/zip.hpp`, starting with `error: this declaration has no storage class or type specifier` on a line reading `_LIBCUDACXX_BEGIN_NAMESPACE_STD`.** The pinned OpenCV/contrib version predates the CUDA 13 / CCCL 3.x compatibility fix: CUDA 13's libcu++ removed that macro, so it expands to nothing, the parser derails on that header, and everything downstream (`grid/detail/copy.hpp`, `gpu_mat.cu`, `gpu_mat_nd.cu`, ...) cascades into `identifier "GpuMat_" is undefined`-style noise. Only the first two `zip.hpp` errors are the real problem. Apply the patch in [Section 4.2](#42-cuda-13x-pre-flight-check-skip-on-cuda-12x) (including its two commit steps) or pin to a submodule version that contains the upstream fix, then `rm -rf _skbuild` and rebuild.
+- **The build compiles the wrong OpenCV version despite checking out a different tag/branch in the submodules** (CMake's `General configuration for OpenCV X.Y.Z` banner names the old version; the log shows `Submodule path 'opencv': checked out '<sha>'` near the start). `pip`'s build hooks run `git submodule update --init --recursive` on every `pip wheel .`, resetting the submodules to the SHAs committed in the wrapper repo and silently discarding any uncommitted `git -C opencv checkout ...`. This also silently discards the Section 4.2 header patch if it wasn't committed inside the submodule. Fix: the commit steps in [Section 4.1](#41-pinning-the-opencv-version-submodules--and-making-the-pin-stick)/[4.2](#42-cuda-13x-pre-flight-check-skip-on-cuda-12x), then `rm -rf _skbuild` and rebuild.
+- **`git checkout 5.0.0` (or another OpenCV version) fails with "pathspec did not match" in the `opencv-python` checkout root, or `git tag` there only shows small numbers like `86`, `93`.** Those are the wrapper repo's internal build-number tags, not OpenCV versions. The version tags live in the submodules: `git -C opencv fetch --tags && git -C opencv checkout <version>` (and the same for `opencv_contrib`), per [Section 4.1](#41-pinning-the-opencv-version-submodules--and-making-the-pin-stick).
+- **`BUILD_LIST` causes a "module not found" or missing-dependency error.** Module names can shift between OpenCV releases (e.g. `features2d` → `features` in 4.13/5.x; `calib3d` split into `calib` + `3d` in parts of 5.x). Drop the `-DBUILD_LIST=...` flag entirely (full contrib build, slower but a safe superset) rather than debugging the exact module name for a given version.
+- **Build reaches 100% and compiles successfully, but fails at the very end with `Exception: Not found: 'python/cv2/py.typed'`** (often preceded by `UserWarning: Typing stubs generation has failed` and a `SymbolNotFoundError` naming some `cv.*` function). `opencv-python`'s packaging step generates Python typing stubs by looking up a fixed list of functions (`findEssentialMat`, `solvePnP*`, `calibrateCamera`, `undistortPoints`, etc., all from `calib3d`) regardless of which modules a downstream project actually needs, and fails the whole build if any of them are missing. The `BUILD_LIST` in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system) already includes `calib3d` for exactly this reason; if a different symbol from a different excluded module trips the same error, either add that module to `BUILD_LIST` too or drop `BUILD_LIST` entirely. Wipe `_skbuild` before retrying either way, per the note in Section 4.
+- **`fatal error: numpy/ndarrayobject.h: No such file or directory`, especially on a retry after a build that got further than this before.** A stale `_skbuild` cache pointing at NumPy headers inside a previous `pip` build-isolation temp directory that no longer exists; see the note in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system). `rm -rf _skbuild` and rebuild.
+- **Build takes forever / runs out of memory.** Make sure `BUILD_LIST` is set (or, failing that, `BUILD_TESTS`/`BUILD_PERF_TESTS`/`BUILD_EXAMPLES`/`BUILD_DOCS` are all `OFF`, see Section 4). On memory-constrained machines, reduce parallel build jobs via `export MAKEFLAGS="-j2"` before `pip wheel .`.
+- **CMake errors mentioning a literal `<your` or `compute` or `capability>` as separate arguments.** `CUDA_ARCH_BIN` ended up set to placeholder text instead of a real number. The Section 4 commands compute this automatically via `nvidia-smi`; if the `CMAKE_ARGS` line was edited by hand, confirm `echo "$CUDA_ARCH"` (`Write-Host $CUDA_ARCH` on Windows) prints a real number like `8.6` before it's used.
+- **`AttributeError: module 'cv2' has no attribute 'cuda'` (or `'__version__'`, or any other unexpected missing attribute) even though the build reported success.** Check `cv2.__file__` first. If it points inside the `opencv-python` checkout directory (e.g. `.../opencv-python/cv2/__init__.py`) rather than into `.venv-cuda/lib/pythonX.Y/site-packages/cv2/__init__.py`, Python imported that checkout's own tracked `cv2/` packaging-template directory instead of the actually-installed package, because the current directory is checked before site-packages and the checkout happens to contain a same-named folder. Re-run from any other directory (`cd ~` first) rather than from inside the `opencv-python` checkout. See the note in [Section 5](#5-verifying-the-build).
+- **Videos won't open / `cv2.VideoCapture(...).isOpened()` is `False`, even though the build succeeded.** CMake's configure step silently disabled FFMPEG (look for `-- FFMPEG is disabled. Required libraries: ... not found` in the build log) instead of failing loudly. Install the FFMPEG dev headers listed in [Section 3](#3-prerequisites) and rebuild.
+- **`ImportError` / two `cv2` installs conflicting.** Run `pip uninstall opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless` (all of them) in the target venv before installing the custom build, then reinstall only the custom wheel. Never have more than one `opencv-*` package installed in the same environment; this is also why Section 6 uses `pip install -e . --no-deps` for stabilo itself.
 - **`ImportError: .../libstdc++.so.6: version 'GLIBCXX_3.4.3X' not found (required by .../cv2.abi3.so)`.** The venv's Python is a conda-provided interpreter, so it resolves `libstdc++.so.6` from that conda installation at runtime, and conda's bundled copy is older than what the build's compiler requires (see the note in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system)). Update it:
   ```bash
   conda install -n base -c conda-forge libstdcxx-ng -y
   ```
   (Adjust `-n base` to whichever conda environment actually provides the venv's underlying Python, if not `base`.) This upgrades a shared runtime library only; it does not require rebuilding OpenCV. Verify with `strings /path/to/conda/lib/libstdc++.so.6 | grep GLIBCXX_3.4 | tail -5` before and after to confirm the needed version is now present.
-- **`nvcc` rejects the host compiler ("unsupported GNU version" or similar), including after setting `HOST_COMPILER_FLAG`.** Three distinct causes, in the order to check them:
-  1. **Wrong variable name for the code path in use.** OpenCV's CUDA modules mix CMake's legacy `FindCUDA.cmake` module (reads `CUDA_HOST_COMPILER`) and modern native CUDA language support (reads `CMAKE_CUDA_HOST_COMPILER`), and only one of the two is read for a given `.cu` file. A build log with file names like `..._generated_gpu_mat.cu.o` and a `*.cu.o.Release.cmake` wrapper script is the signature of the legacy `FindCUDA.cmake` path, meaning `CUDA_HOST_COMPILER` (no `CMAKE_` prefix) is the variable that matters there, not `CMAKE_CUDA_HOST_COMPILER`. `HOST_COMPILER_FLAG` in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system) sets both, so this shouldn't come up when following these instructions as written, but it's the first thing to check if it was set by hand.
-  2. **Missing `-D` prefix.** Check the CMake configure log for a line like `CMake Warning: Ignoring extra path from command line: "DCMAKE_CUDA_HOST_COMPILER=..."` (or `DCUDA_HOST_COMPILER=...`): that means the `-D` was dropped somewhere, commonly from editing the `CMAKE_ARGS` string by hand instead of using the separate `HOST_COMPILER_FLAG` variable, so the flag was silently discarded rather than applied.
-  3. **Stale build cache.** CMake detects and caches the CUDA host compiler the first time it configures a given build directory, and reuses that cached detection on later configures regardless of a changed `CMAKE_ARGS`, even once the variable name and formatting are both correct. Remove the cached build tree and rebuild, per the note in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system): `rm -rf _skbuild` from the `opencv-python` checkout root, then `pip wheel .` again.
-- **`CMake Error: CUDA: OpenCV requires enabled 'cudev' module from 'opencv_contrib'`.** The build ran with `WITH_CUDA=ON` but without `ENABLE_CONTRIB=1`. This is mandatory, not optional; see [Section 1](#1-why-a-source-build-is-required)/[Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system). Set `export ENABLE_CONTRIB=1` before `pip wheel .`.
-- **CMake errors mentioning a literal `<your` or `compute` or `capability>` as separate arguments.** `CUDA_ARCH_BIN` ended up set to placeholder text instead of a real number. The Section 4 commands compute this automatically via `nvidia-smi`; if the `CMAKE_ARGS` line was edited by hand, confirm `echo "$CUDA_ARCH"` (`Write-Host $CUDA_ARCH` on Windows) prints a real number like `8.6` before it's used.
-- **Videos won't open / `cv2.VideoCapture(...).isOpened()` is `False`, even though the build succeeded.** CMake's configure step silently disabled FFMPEG (look for `-- FFMPEG is disabled. Required libraries: ... not found` in the build log) instead of failing loudly. Install the FFMPEG dev headers listed in [Section 3](#3-prerequisites) and rebuild.
-- **`ImportError` / two `cv2` installs conflicting.** Run `pip uninstall opencv-python opencv-contrib-python opencv-python-headless opencv-contrib-python-headless` (all of them) in the target venv before installing the custom build, then reinstall only the custom wheel. Never have more than one `opencv-*` package installed in the same environment; this is also why Section 6 uses `pip install -e . --no-deps` for stabilo itself.
-- **CMake can't find `nvcc` / CUDA compiler.** Ensure the CUDA Toolkit's `bin` directory is on `PATH` (Linux: `/usr/local/cuda/bin`) before running `pip wheel .`.
-- **`BUILD_LIST` causes a "module not found" or missing-dependency error.** Module names can shift between OpenCV releases. Drop the `-DBUILD_LIST=...` flag entirely (full contrib build, slower but a safe superset) rather than debugging the exact module name for a given version.
-- **Build reaches 100% and compiles successfully, but fails at the very end with `Exception: Not found: 'python/cv2/py.typed'`** (often preceded by `UserWarning: Typing stubs generation has failed` and a `SymbolNotFoundError` naming some `cv.*` function). `opencv-python`'s packaging step generates Python typing stubs by looking up a fixed list of functions (`findEssentialMat`, `solvePnP*`, `calibrateCamera`, `undistortPoints`, etc., all from `calib3d`) regardless of which modules a downstream project actually needs, and fails the whole build if any of them are missing. The `BUILD_LIST` in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system) already includes `calib3d` for exactly this reason; if a different symbol from a different excluded module trips the same error, either add that module to `BUILD_LIST` too or drop `BUILD_LIST` entirely. Wipe `_skbuild` before retrying either way, per the note in Section 4.
-- **`fatal error: numpy/ndarrayobject.h: No such file or directory`, especially on a retry after a build that got further than this before.** A stale `_skbuild` cache pointing at NumPy headers inside a previous `pip` build-isolation temp directory that no longer exists; see the note in [Section 4](#4-recommended-build-opencv-500-via-the-opencv-python-build-system). `rm -rf _skbuild` and rebuild.
-- **Build takes forever / runs out of memory.** Make sure `BUILD_LIST` is set (or, failing that, `BUILD_TESTS`/`BUILD_PERF_TESTS`/`BUILD_EXAMPLES`/`BUILD_DOCS` are all `OFF`, see Section 4). On memory-constrained machines, reduce parallel build jobs via `export MAKEFLAGS="-j2"` before `pip wheel .`.
 - **A specific detector's `cv2.cuda.*_create` doesn't exist even though `WITH_CUDA=ON`.** Not every feature detector has a CUDA implementation in every OpenCV release. Re-check with the Section 5 snippet; if it's `False`, that detector isn't available on GPU in that build, use `gpu=False` for it.
 - **Windows: `CMAKE_ARGS`/`ENABLE_CONTRIB` not picked up.** Environment variables set with `set` in `cmd.exe` only persist for that shell session; use `$env:CMAKE_ARGS = "..."` / `$env:ENABLE_CONTRIB = "1"` in PowerShell, or `set VAR=...` immediately before `pip wheel .` in the same `cmd.exe` window.
 - **`test_exact_reproduction_of_reference_routine` fails in the CUDA venv.** Expected, see the note in Section 4. This test is pinned to OpenCV 4.x CPU numerics and isn't a signal of a GPU-path bug; check the other stabilo tests (`pytest -k gpu`) instead.
