@@ -505,6 +505,14 @@ def test_gpu_unsupported_detector_raises(detector_name):
         Stabilizer(detector_name=detector_name, gpu=True)
 
 
+@pytest.mark.parametrize('detector_name', ['brisk', 'kaze', 'akaze'])
+def test_missing_opencv_binding_raises_clear_error(monkeypatch, detector_name):
+    """OpenCV >= 5.0 dropped BRISK/KAZE/AKAZE bindings; this should fail validation, not raise AttributeError."""
+    monkeypatch.delattr(cv2, f'{detector_name.upper()}_create')
+    with pytest.raises(ValueError, match=detector_name.upper()):
+        Stabilizer(detector_name=detector_name)
+
+
 @requires_cuda
 def test_gpu_warp_cur_frame(images):
     cur_frame, ref_frame = images

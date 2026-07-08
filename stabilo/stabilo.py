@@ -925,6 +925,15 @@ class Stabilizer:
         """
         if self.detector_name not in self.VALID_DETECTORS:
             raise ValueError(f"Invalid detector: {self.detector_name}. Choose from {self.VALID_DETECTORS}")
+        missing_binding = self.detector_name in ('brisk', 'kaze', 'akaze') and not hasattr(
+            cv2, f'{self.detector_name.upper()}_create'
+        )
+        if missing_binding:
+            raise ValueError(
+                f"cv2.{self.detector_name.upper()}_create is unavailable in this OpenCV build (OpenCV >= 5.0 dropped "
+                f"the Python bindings for BRISK/KAZE/AKAZE). Install opencv-python<5.0.0, or use detector_name in "
+                f"{sorted(set(self.VALID_DETECTORS) - {'brisk', 'kaze', 'akaze'})}."
+            )
         if self.gpu and self.detector_name not in self.VALID_GPU_DETECTORS:
             raise ValueError(
                 f"detector '{self.detector_name}' has no CUDA implementation; gpu=True supports only "
