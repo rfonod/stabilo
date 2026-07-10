@@ -1,189 +1,70 @@
 # Stabilo Scripts
 
-This directory contains utility scripts that demonstrate the functionality of the Stabilo library. The scripts included here are `stabilize_video.py` and `stabilize_boxes.py`. Additionally, there is another script located in the find_thresholds folder, which has its own README file.
+> **Note:** The former `stabilize_video.py` and `stabilize_boxes.py` scripts are now part of the
+> installed package and are exposed through the `stabilo` console command:
+>
+> ```bash
+> stabilo video <input> [options]    # stabilize a video
+> stabilo tracks <input> [options]   # stabilize per-frame object annotations (tracks)
+> ```
+>
+> See the [CLI section of the main README](../README.md#command-line-interface) and the
+> [Detailed Usage Guide](../docs/usage.md) for the full option reference. Generate a local
+> configuration file with `stabilo config copy` and inspect the defaults with `stabilo config show`.
 
-## stabilize_video.py
+This directory contains the `find_threshold_models.py` research tool.
+
+## find_threshold_models.py
 
 ### Description
 
-`stabilize_video.py` stabilizes videos using the 'stabilo' library. It reads a video file, stabilizes it using a reference frame stabilization method, and optionally saves the stabilized video or the visualization of the stabilization process. The stabilization is based on feature point matching between frames, followed by transformation estimation using a RANSAC-type algorithm. The script supports various feature detectors, matchers, and extensive customization through command-line options or a configuration file. It also supports CLAHE application, video downsampling, and exclusion masks for stabilization. Exclusion masks can be provided in any of the supported formats: axis-aligned boxes (`yolo`/`xywh`), oriented bounding boxes (`xywha`), four-corner boxes (`four`), arbitrary polygons (`polygon`), and circular regions (`circle`).
+The `find_threshold_models.py` script generates linear regression models for the BRISK, KAZE, and AKAZE feature detectors. These models quantify the relationship between the threshold values applied by the detectors and the average number of detected keypoints per image. Using a diverse dataset, the script can incorporate axis-aligned bounding boxes to exclude specific regions from detection. It also supports histogram normalization via CLAHE, producing separate models for all combinations of mask and CLAHE usage. These threshold models are essential for establishing a consistent benchmarking framework for the Stabilo library, allowing for fair comparisons with other detectors like ORB, SIFT, and RSIFT based on keypoint count for image matching. An example benchmarking campaign is available in the [stabilo-optimize](https://github.com/rfonod/stabilo-optimize) repository.
+
+> **Note**: The script is designed to work with a diverse image dataset and can be adapted to suit specific requirements and detector configurations.
 
 ### Usage
 
 ```bash
-python stabilize_video.py <input> [options]
-```
-
-### Options
-
-**Arguments:**
-
-- `input`: Path to the input video file.
-
-**Main Options:**
-
-- `-o OUTPUT`, `--output OUTPUT`: Output folder to save the stabilized video or visualization (default: same as input).
-- `-s`, `--save`: Save the stabilized video (default: False).
-- `-rf REF_FRAME`, `--ref-frame REF_FRAME`: Custom reference frame index for stabilization (default: 0).
-- `-d`, `--debug`: Enable debug mode (default: False).
-
-**Mask Options:**
-
-- `-nm`, `--no-mask`: Do not use exclusion masks during stabilization.
-- `-mp MASK_PATH`, `--mask-path MASK_PATH`: Custom mask filepath (default: input with .txt extension).
-- `-mfi MASK_FRAME_IDX`, `--mask-frame-idx MASK_FRAME_IDX`: Frame number column index in the mask file (default: 0).
-- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the bounding box parameters used as masks (default: 2). The number of columns read depends on the mask format.
-- `-mei MASK_END_IDX`, `--mask-end-idx MASK_END_IDX`: Exclusive end column index for mask columns (default: auto-determined from the format). Must be set for `polygon` when the polygon data does not extend to the last column.
-- `me MASK_ENC`, `--mask-enc MASK_ENC`: Mask format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points), `polygon` (arbitrary polygon), `circle` (centre + radius) (default: `yolo`). Note: `polygon` and `circle` are supported for masking only and cannot be used for box transformation.
-
-**Visualization Options:**
-
-- `-v`, `--viz`: Visualize the transformation process (default: False).
-- `-sv`, `--save-viz`: Save the visualization of the transformation process as a video (default: False).
-- `-nl`, `--no-lines`: Hide lines between matched feature points (default: False).
-- `-nb`, `--no-boxes`: Hide bounding boxes on the (un-)stabilized videos (default: False).
-- `-sp SPEED`, `--speed SPEED`: Visualization speed in milliseconds (0 for manual control) (default: 10).
-
-**Stabilo Configuration:**
-
-- `-cc CUSTOM_CONFIG`, `--custom-config CUSTOM_CONFIG`: Path to a config file that overrides the default stabilo parameters or the CLI arguments. See an [example config file](./custom.yaml).
-- `-g`, `--gpu`: Use CUDA GPU acceleration for feature detection, matching, and frame warping (default: False). Requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](../docs/cuda.md).
-- `-gid GPU_DEVICE_ID`, `--gpu-device-id GPU_DEVICE_ID`: CUDA device index to use when `--gpu` is set (default: 0).
-- [...] Most of the Stabilo parameters can be provided as command-line arguments. Examples include `--feature-type`, `--matcher-type`, and `--ransac-reproj-threshold`. For a complete list of parameters, refer to the argument parser options or the Stabilo documentation.
-
-### Examples
-
-1. Stabilize a video using default settings and save the stabilized video:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --save
-    ```
-
-2. Visualize the stabilization process:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --viz
-    ```
-
-3. Save a stabilized video using a custom detector and matcher:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --detector-name sift --matcher-name flann --save
-    ```
-
-4. Apply stabilization without a mask and visualize the process:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --no-mask --viz
-    ```
-
-5. Stabilize a video using a custom reference frame and save both stabilized video and visualization:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --ref-frame 15 --save --save-viz
-    ```
-
-6. Use a custom mask filepath and specify start column index of bounding boxes:
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --mask-path path/to/mask/mask.txt --mask-start 1 --viz
-    ```
-
-7. Stabilize a video using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](../docs/cuda.md)):
-
-    ```bash
-    python stabilize_video.py path/to/video/video.mp4 --gpu --save
-    ```
-
-## stabilize_boxes.py
-
-### Description
-
-`stabilize_boxes.py` stabilizes bounding boxes (BBs) in a video using the 'stabilo' library. It reads a video file and a corresponding tracks file containing BBs for each frame of the video. The script then stabilizes these BBs and saves them to a file. It also provides options to visualize the stabilized and un-stabilized BBs in real-time or save the visualization as a video. The stabilization can be performed with respect to a custom reference frame, and exclusion masks can be used to exclude certain areas from stabilization. Tracks and masks can be provided in different formats: axis-aligned boxes (`yolo`/`xywh`), oriented bounding boxes (`xywha`), and four-corner boxes (`four`) are supported for the tracks to be stabilized; additionally, `polygon` and `circle` are available for exclusion masks.
-
-### Usage
-
-```bash
-python stabilize_boxes.py <input> [options]
+python scripts/find_threshold_models.py <dir> [options]
 ```
 
 **Arguments:**
+- `<dir>`: Directory containing the diverse image dataset.
 
-- `input`: Filepath to the input video file.
+**Options:**
+- `-d DETECTORS`, `--detectors DETECTORS`: List of detectors to analyze. Choices include 'brisk', 'kaze', 'akaze'. (default: ['brisk', 'kaze', 'akaze'])
+- `-m MASK_USE`, `--mask-use MASK_USE`: Specify whether to use a mask during detection. Choices: True, False. (default: [True, False])
+- `-c CLAHE_USE`, `--clahe-use CLAHE_USE`: Specify whether to apply CLAHE on images. Choices: True, False. (default: [True, False])
+- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index for bounding boxes in the mask file. (default: 2)
 
-**Main Options:**
+> 💡 **Note**: To run this script, install the optional plotting dependency using `pip install '.[extras]'`.
 
-- `-o OUTPUT`, `--output OUTPUT`: Output folder to save the stabilized tracks or visualization (default: same as input).
-- `-s`, `--save`: Save the stabilized tracks to a file.
-- `-rf REF_FRAME`, `--ref-frame REF_FRAME`: Custom reference frame index for stabilization (default: 0).
+### Dataset Requirements
 
-**Tracks Options:**
+1. **Diverse Set of Images**: The dataset should include a diverse set of images representing various scenarios.
+2. **Axis-Aligned Bounding Boxes (Optional)**: The images may come with axis-aligned bounding boxes representing regions where features should not be detected.
 
-- `-t TRACKS`, `--tracks TRACKS`: Filepath to the input tracks file (default: input with .txt extension).
-- `-bfi BOX_FRAME_IDX`, `--boxes-frame-idx BOX_FRAME_IDX`: Frame number column index in the tracks file (default: 0).
-- `-bsi BOXES_START_IDX`, `--boxes-start-idx BOXES_START_IDX`: Start column index of the bounding box parameters (default: 2). The number of columns read depends on the box format.
-- `-bei BOXES_END_IDX`, `--boxes-end-idx BOXES_END_IDX`: Exclusive end column index for box columns (default: auto-determined from the format). Must be set for `polygon` (not applicable to tracks, included for completeness) when the data does not extend to the last column.
-- `-be BOXES_ENC`, `--boxes-enc BOXES_ENC`: Bounding box format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points) (default: `yolo`).
+### Script Functionality
+- **Threshold Models**: Finds linear models for BRISK, KAZE, and AKAZE detectors, considering various combinations of detectors, mask usage, and CLAHE.
+- **Data Generation**: Collects data by finding the average number of detected keypoints for different threshold values.
+- **Model Fitting**: Fits linear models to the collected data, considering a specified range of keypoints.
+- **Data Filtering**: Filters the collected data to fit the model only within a specified range of keypoints.
+- **Data and Model Storage**: Saves raw and filtered data, as well as the linear models for further analysis.
+- **Plotting**: Generates and saves plots illustrating the relationship between average keypoints and thresholds.
 
-**Mask Options:**
+### Important Notes
+- The dataset should be carefully crafted to ensure a representative set of images with diverse content and scenarios.
+- Axis-aligned bounding boxes can be provided to guide the feature detection process and create more meaningful threshold models.
+- The generated models are stored in the `models` directory, while the data and plots are saved in the `results` and `plots` directories, respectively.
 
-- `-nm`, `--no-mask`: Do not use exclusion masks during stabilization.
-- `-mp MASK_PATH`, `--mask-path MASK_PATH`: Custom mask filepath (default: input with .txt extension).
-- `-mfi MASK_FRAME_IDX`, `--mask-frame-idx MASK_FRAME_IDX`: Frame number column index in the mask file (default: 0).
-- `-msi MASK_START_IDX`, `--mask-start-idx MASK_START_IDX`: Start column index of the bounding box parameters used as masks (default: 2). The number of columns read depends on the mask format.
-- `-mei MASK_END_IDX`, `--mask-end-idx MASK_END_IDX`: Exclusive end column index for mask columns (default: auto-determined from the format). Must be set for `polygon` when the polygon data does not extend to the last column.
-- `-me MASK_ENC`, `--mask-enc MASK_ENC`: Mask format. Choices: `yolo` (xywh centre-based), `pascal` (x1y1x2y2), `coco` (x1y1wh), `xywha` (oriented box), `four` (four corner points), `polygon` (arbitrary polygon), `circle` (centre + radius) (default: `yolo`). Note: `polygon` and `circle` are supported for masking only.
+### Example Output
+Below are some example figures generated by the script, illustrating the relationship between average keypoints and thresholds for different detectors.
 
-**Visualization Options:**
+#### BRISK Detector
+![BRISK Threshold Model](plots/BRISK/plot_mask_True_clahe_False.png)
 
-- `-v`, `--viz`: Visualize the stabilized and un-stabilized bounding boxes in real-time (default: False).
-- `-sv`, `--save-viz`: Save the visualization of the bounding boxes as a video (default: False).
-- `-sp SPEED`, `--speed SPEED`: Visualization speed in milliseconds (0 for manual control) (default: 10).
-- `-tl TAIL_LENGTH`, `--tail-length TAIL_LENGTH`: Number of frames to show the track tail in the visualization (default: 40).
-- `-tr TAIL_RADIUS`, `--tail-radius TAIL_RADIUS`: Maximum radius in pixels for the track tail circles in the visualization (default: 12).
-- `-cx CANVAS_X`, `--canvas-x CANVAS_X`: Canvas enlargement factor in both x and y directions and as a function of the original video resolution (default: 1.5).
+#### KAZE Detector
+![KAZE Threshold Model](plots/KAZE/plot_mask_True_clahe_False.png)
 
-**Stabilo Configuration:**
-
-- `-cc CUSTOM_CONFIG`, `--custom-config CUSTOM_CONFIG`: Path to a config file that overrides the default stabilo parameters or the CLI arguments. See an [example config file](./custom.yaml).
-- `-g`, `--gpu`: Use CUDA GPU acceleration for feature detection, matching, and frame warping (default: False). Requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](../docs/cuda.md).
-- `-gid GPU_DEVICE_ID`, `--gpu-device-id GPU_DEVICE_ID`: CUDA device index to use when `--gpu` is set (default: 0).
-- [...] Most of the Stabilo parameters can be provided as command-line arguments. Examples include `--feature-type`, `--matcher-type`, and `--ransac-reproj-threshold`. For a complete list of parameters, refer to the argument parser options or the Stabilo documentation.
-
-### Examples
-
-1. Stabilize tracks using default parameters with custom reference frame:
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --save --ref-frame 100
-    ```
-
-2. Visualize and save stabilization process with custom speed:
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --speed 20
-    ```
-
-3. Stabilize tracks without exclusion masks and save both visualization and tracks:
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --no-mask --save-viz --save
-    ```
-
-4. Use custom config and mask files; save stabilized tracks:
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --save --custom-config path/to/config.yaml --mask-path path/to/mask.txt
-    ```
-
-5. Save visualization with custom tail length/radius using custom config:
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
-    ```
-
-6. Stabilize tracks using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](../docs/cuda.md)):
-
-    ```bash
-    python stabilize_boxes.py path/to/video.mp4 --gpu --save
-    ```
+#### AKAZE Detector
+![AKAZE Threshold Model](plots/AKAZE/plot_mask_True_clahe_False.png)

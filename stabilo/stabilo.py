@@ -5,7 +5,8 @@
 stabilo.py - Reference frame video stabilization with optional user-provided exclusion masks
 
 This module provides the Stabilizer class for video or track stabilization using feature matching
-and transformation estimation. It leverages OpenCV for core functionalities.
+and transformation estimation. It leverages OpenCV for the classical algorithms and kornia for the
+optional learning-based ones.
 
 The class supports various feature detectors, matchers, filtering methods, and transformation types.
 Fine-tuning these parameters allows customization for specific video stabilization needs.
@@ -16,7 +17,9 @@ fine-tuned to suit specific requirements, see https://github.com/rfonod/stabilo-
 Key Features:
   - Video or bounding box (tracks) stabilization with respect to a reference frame.
   - Fine-tunable parameters for feature detectors, matchers, filtering methods, and transformations.
-  - Support for various feature detectors (e.g., ORB, SIFT) and matchers (e.g., BF, FLANN).
+  - Classical feature detectors (ORB, SIFT, RootSIFT, BRISK, KAZE, AKAZE) and learning-based ones
+    (XFeat, DISK, DeDoDe, KeyNet, LoFTR), paired with classical (BF, FLANN) or learned (LightGlue)
+    matchers. All configurable options live in stabilo/cfg/default.yaml.
   - Projective or affine transformations for frame stabilization.
   - RANSAC-based algorithms for robust transformation matrix estimation.
   - CLAHE and pre-processing options for contrast enhancement.
@@ -24,6 +27,16 @@ Key Features:
   - Optional CUDA GPU acceleration (gpu=True) for feature detection, matching, and frame warping,
     when built against a CUDA-enabled OpenCV. RANSAC-based transformation estimation has no OpenCV
     CUDA equivalent and always runs on CPU. See docs/cuda.md for building such an OpenCV.
+  - A separate 'device' option (auto, cpu, cuda, mps) selects the torch device for the
+    learning-based detectors and matchers only; it is unrelated to the 'gpu' option above.
+  - An optional 'logger' keyword routes all messages to a caller-supplied logging.Logger.
+
+Caveats:
+  - Except for KeyNet, the learning-based detectors and LoFTR are upright models: matching degrades
+    sharply once the current frame is rotated more than roughly 30 degrees from the reference frame.
+    Use a classical detector or KeyNet for footage with large in-plane rotation.
+  - The learning-based detectors are memory hungry at high resolution. Reduce downsample_ratio for
+    large inputs; LoFTR in particular scales quadratically with the pixel count.
 
 Usage:
 1. Create an instance of the 'Stabilizer' class with desired parameter configurations.
@@ -41,6 +54,7 @@ import cv2
 import numpy as np
 
 from .utils import four2xywh, is_box_rotated, load_config, setup_logger, timer, xywh2four, xywha2four
+from .version_check import check_for_updates_once
 
 # Configure logging
 logger = setup_logger(__name__)
@@ -63,9 +77,14 @@ class Stabilizer:
     to transform points from the current frame to the reference frame.
     """
 
-    VALID_DETECTORS = ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze']
+    VALID_DETECTORS = ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze', 'xfeat', 'disk', 'dedode', 'keynet', 'loftr']
     VALID_GPU_DETECTORS = {'orb'}
-    VALID_MATCHERS = ['bf', 'flann']
+    DL_DETECTORS = {'xfeat', 'disk', 'dedode', 'keynet', 'loftr'}
+    SPARSE_DL_DETECTORS = {'xfeat', 'disk', 'dedode', 'keynet'}
+    VALID_MATCHERS = ['bf', 'flann', 'lightglue']
+    VALID_DEVICES = ['auto', 'cpu', 'cuda', 'mps']
+    LIGHTGLUE_FEATURE_NAMES = {'disk': 'disk', 'dedode': 'dedodeg', 'keynet': 'keynet_affnet_hardnet'}
+    DL_PIXEL_BUDGETS = {'xfeat': 2_000_000, 'disk': 500_000, 'dedode': 500_000, 'keynet': 500_000, 'loftr': 300_000}
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
     VALID_MATCH_QUERY_FRAMES = ['reference', 'current']
@@ -86,8 +105,8 @@ class Stabilizer:
         Initialize the Stabilizer with user-provided or default configurations.
 
         Arguments:
-        - detector_name: str - feature detector to use (orb, sift, rsift, brisk, kaze, akaze)
-        - matcher_name: str - feature matcher to use (bf, flann)
+        - detector_name: str - feature detector to use (orb, sift, rsift, brisk, kaze, akaze, xfeat, disk, dedode, keynet, loftr)
+        - matcher_name: str - feature matcher to use (bf, flann, lightglue)
         - filter_type: str - filter type for the feature matcher (none, ratio, distance)
         - transformation_type: str - transformation for stabilization (projective, affine)
         - clahe: bool - use CLAHE for contrast enhancement
@@ -109,13 +128,26 @@ class Stabilizer:
         - gpu: bool - use CUDA GPU acceleration for detection/matching/warping; only detector_name in
           VALID_GPU_DETECTORS is supported (see docs/cuda.md)
         - gpu_device_id: int - CUDA device index to use when gpu=True (default 0)
+        - device: str - torch device for deep-learning detectors/matchers only (auto, cpu, cuda, mps)
+        - loftr_weights: str - LoFTR pretrained weights (outdoor, indoor)
+        - loftr_confidence: float - minimum LoFTR correspondence confidence to keep [0.0, 1.0]
+        - disk_weights: str - DISK pretrained weights (depth, epipolar)
+        - dedode_detector_weights: str - DeDoDe detector weights
+        - dedode_descriptor_weights: str - DeDoDe descriptor weights
         - viz: bool - save some features for visualization (e.g., keypoints, descriptors, masks)
         - benchmark: bool - different behavior for benchmarking purposes (e.g., re-use the last transformation if the current is None)
         - min_good_match_count_warning: int - min number of good matches to trigger a warning
         - min_inliers_match_count_warning: int - min number of inliers to trigger a warning
+        - logger: logging.Logger - optional external logger; defaults to the module logger
         """
+        self.logger = kwargs.pop('logger', None) or logger
         self._load_configuration(kwargs)
         self._validate_arguments()
+        self._torch_device = None
+        if self.detector_name in self.DL_DETECTORS or self.matcher_name == 'lightglue':
+            from . import dl
+
+            self._torch_device = dl.resolve_device(self.device)
         if self.gpu:
             cv2.cuda.setDevice(self.gpu_device_id)
         self._initialize_variables()
@@ -125,6 +157,8 @@ class Stabilizer:
         self._create_helpers()
         if self.gpu:
             self._create_gpu_buffers()
+        if not self.benchmark:
+            check_for_updates_once(self.logger)
 
     def _load_configuration(self, kwargs):
         """
@@ -151,6 +185,9 @@ class Stabilizer:
         self.gpu_stream = None
         self._gpu_frame_buf, self._gpu_mask_buf = None, None
         self._gpu_cur_desc_buf, self._gpu_warp_buf = None, None
+        self._loftr = None
+        self._loftr_ref_tensor, self._loftr_cur_tensor = None, None
+        self._loftr_ref_mask_ds, self._loftr_cur_mask_ds = None, None
 
     def _create_feature_detectors(self):
         """
@@ -173,6 +210,15 @@ class Stabilizer:
             return self._create_kaze_detectors()
         elif detector_name == "akaze":
             return self._create_akaze_detectors()
+        elif detector_name in self.SPARSE_DL_DETECTORS:
+            from . import dl
+
+            return dl.create_dl_detectors(self)
+        elif detector_name == "loftr":
+            from . import dl
+
+            self._loftr = dl.create_loftr(self)
+            return None, None
 
     def _create_orb_detectors(self):
         """
@@ -248,7 +294,7 @@ class Stabilizer:
             threshold_cur = model[1] + model[0] * self.max_features
             threshold_ref = model[1] + model[0] * self.max_features * self.ref_multiplier
             if not self.benchmark:
-                logger.info(
+                self.logger.info(
                     f"Using {detector_name} with threshold {threshold_ref} for the reference frame and {threshold_cur} for the current frame."
                 )
         else:
@@ -261,7 +307,7 @@ class Stabilizer:
             )
             threshold_ref = threshold_cur
             if not self.benchmark:
-                logger.warning(f"No threshold analysis for {detector_name}. Using default threshold.")
+                self.logger.warning(f"No threshold analysis for {detector_name}. Using default threshold.")
         return threshold_cur, threshold_ref
 
     def _get_norm_type(self):
@@ -272,15 +318,28 @@ class Stabilizer:
             return cv2.NORM_HAMMING  # N.B.: if ORB is using WTA_K == 3 or 4, cv.NORM_HAMMING2 should be used
         elif self.detector_name in ["sift", "rsift", "kaze"]:
             return cv2.NORM_L2
+        elif self.detector_name in self.SPARSE_DL_DETECTORS:
+            return cv2.NORM_L2
+        elif self.detector_name == "loftr":
+            return None
 
     def _create_matcher(self):
         """
         Create the feature matcher based on the provided configurations.
         """
+        if self.detector_name == "loftr":
+            self.matcher = None
+            if not self.benchmark:
+                self.logger.info("LoFTR is detector-free; matcher and filter settings are ignored.")
+            return
         if self.matcher_name == "bf":
             self.matcher = self._create_brute_force_matcher()
         elif self.matcher_name == "flann":
             self.matcher = self._create_flann_matcher()
+        elif self.matcher_name == "lightglue":
+            from . import dl
+
+            self.matcher = dl.create_lightglue_matcher(self)
 
     def _create_brute_force_matcher(self):
         """
@@ -288,7 +347,7 @@ class Stabilizer:
         """
         if self.gpu:
             if self.filter_type != 'ratio':
-                logger.warning(
+                self.logger.warning(
                     f"GPU brute-force matcher does not support crossCheck; matches will not be "
                     f"mutually verified as they would be on CPU with filter_type='{self.filter_type}'."
                 )
@@ -360,6 +419,10 @@ class Stabilizer:
         """
         success = self.process_frame(frame, boxes, box_format, is_reference=False)
         if success:
+            if self.detector_name == 'loftr':
+                self.ref_pts, self.cur_pts = self._match_loftr()
+                self.calculate_transformation_matrix()
+                return
             if self.match_query_frame == 'current':
                 matches = self.get_matches(self.cur_desc, self.ref_desc)  # query = current frame
                 if matches and self.ref_kpts is not None and self.cur_kpts is not None:
@@ -385,12 +448,12 @@ class Stabilizer:
         Process the given frame and bounding boxes.
         """
         if frame is None:
-            logger.error(f'{"Reference" if is_reference else "Current"} frame is invalid.')
+            self.logger.error(f'{"Reference" if is_reference else "Current"} frame is invalid.')
             sys.exit(1)
 
         if self.mask_use:
             if boxes is None:
-                logger.warning(
+                self.logger.warning(
                     f'Mask is set to be used, but no bounding boxes were provided for the {"reference" if is_reference else "current"} frame.'
                 )
         else:
@@ -398,6 +461,7 @@ class Stabilizer:
 
         if is_reference:
             self.h, self.w = frame.shape[:2]
+            self._warn_dl_resolution()
             self.ref_frame, self.ref_boxes, self.ref_box_format = frame, boxes, box_format
         else:
             self.cur_frame, self.cur_boxes, self.cur_box_format = frame, boxes, box_format
@@ -429,6 +493,26 @@ class Stabilizer:
 
         return True
 
+    def _warn_dl_resolution(self) -> None:
+        """
+        Warn when a deep-learning detector will run on frames large enough to strain system memory.
+        """
+        budget = self.DL_PIXEL_BUDGETS.get(self.detector_name)
+        if budget is None or self.benchmark:
+            return
+        width, height = round(self.w * self.downsample_ratio), round(self.h * self.downsample_ratio)
+        pixels = width * height
+        if pixels <= budget:
+            return
+        suggested = min(1.0, (budget / (self.w * self.h)) ** 0.5)
+        scaling = " and scales quadratically with the pixel count" if self.detector_name == 'loftr' else ""
+        self.logger.warning(
+            f"'{self.detector_name}' will process {width}x{height} ({pixels / 1e6:.2f} MP) frames at "
+            f"downsample_ratio={self.downsample_ratio}, above the {budget / 1e6:.2f} MP guideline for this "
+            f"detector. It can exhaust system memory at this size{scaling}. "
+            f"Consider downsample_ratio <= {suggested:.2f}."
+        )
+
     @timer(PROFILING)
     def get_features_and_descriptors(
         self, frame: np.ndarray, mask: np.ndarray = None, ref_frame: bool = False
@@ -438,6 +522,9 @@ class Stabilizer:
         """
         if frame is None:
             return None, None, None
+
+        if self.detector_name in self.DL_DETECTORS:
+            return self._get_features_and_descriptors_dl(frame, mask, ref_frame)
 
         if self.gpu:
             self._gpu_frame_buf.upload(frame, self.gpu_stream)
@@ -483,7 +570,7 @@ class Stabilizer:
             else:
                 kpts, desc = detector.detectAndCompute(frame, mask)
         except cv2.error as e:
-            logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
+            self.logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
             return None, None, None
         finally:
             if self.gpu:
@@ -502,14 +589,103 @@ class Stabilizer:
 
         return kpts, desc, frame_gray
 
+    def _get_features_and_descriptors_dl(self, frame: np.ndarray, mask: np.ndarray, ref_frame: bool) -> tuple:
+        """
+        Feature extraction path for the deep-learning (kornia) detectors.
+        """
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        if self.clahe:
+            gray = self.claher.apply(gray)
+        frame_gray = gray if self.viz else None
+        ratio = self.downsample_ratio
+
+        if self.detector_name == 'loftr':
+            model_input, mask_ds = gray, mask
+            if ratio != 1.0:
+                model_input = cv2.resize(gray, (0, 0), fx=ratio, fy=ratio)
+                mask_ds = cv2.resize(mask, (0, 0), fx=ratio, fy=ratio) if mask is not None else None
+            from . import dl
+
+            tensor = dl.to_tensor_gray(model_input, self._torch_device)
+            if ref_frame:
+                self._loftr_ref_tensor, self._loftr_ref_mask_ds = tensor, mask_ds
+            else:
+                self._loftr_cur_tensor, self._loftr_cur_mask_ds = tensor, mask_ds
+            return None, None, frame_gray
+
+        detector = self.detector_ref if ref_frame else self.detector_cur
+        if detector.wants == 'gray':
+            model_input = gray
+        elif self.clahe:
+            model_input = np.repeat(gray[:, :, None], 3, axis=2)
+        else:
+            model_input = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        mask_ds = mask
+        if ratio != 1.0:
+            model_input = cv2.resize(model_input, (0, 0), fx=ratio, fy=ratio)
+            mask_ds = cv2.resize(mask, (0, 0), fx=ratio, fy=ratio) if mask is not None else None
+
+        try:
+            kpts, desc = detector.detectAndCompute(model_input, mask_ds)
+        except Exception as e:
+            self.logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
+            return None, None, None
+
+        if ratio != 1.0:
+            for kpt in kpts:
+                kpt.pt = (kpt.pt[0] / ratio, kpt.pt[1] / ratio)
+
+        return kpts, desc, frame_gray
+
+    def _match_loftr(self) -> tuple:
+        """
+        Produce reference/current point correspondences using LoFTR.
+        """
+        if self._loftr_ref_tensor is None:
+            self.logger.error("Reference frame is not set.")
+            sys.exit(1)
+
+        from . import dl
+
+        ref_xy, cur_xy, conf = self._loftr.match(self._loftr_ref_tensor, self._loftr_cur_tensor)
+        keep = conf >= self.loftr_confidence
+        ref_xy, cur_xy = ref_xy[keep], cur_xy[keep]
+
+        if self._loftr_ref_mask_ds is not None and len(ref_xy):
+            keep = dl.filter_by_mask(ref_xy, self._loftr_ref_mask_ds)
+            ref_xy, cur_xy = ref_xy[keep], cur_xy[keep]
+        if self._loftr_cur_mask_ds is not None and len(cur_xy):
+            keep = dl.filter_by_mask(cur_xy, self._loftr_cur_mask_ds)
+            ref_xy, cur_xy = ref_xy[keep], cur_xy[keep]
+
+        if self.downsample_ratio != 1.0:
+            ref_xy = ref_xy / self.downsample_ratio
+            cur_xy = cur_xy / self.downsample_ratio
+
+        if len(ref_xy) <= self.min_good_match_count_warning:
+            self.logger.warning(f'Only {len(ref_xy)} good matches were found.')
+
+        return ref_xy.astype(np.float32).reshape(-1, 2), cur_xy.astype(np.float32).reshape(-1, 2)
+
     @timer(PROFILING)
     def get_matches(self, desc1: np.ndarray, desc2: np.ndarray) -> list:
         """
         Match the given descriptors.
         """
         if desc1 is None or desc2 is None:
-            logger.warning("One of the descriptors is invalid.")
+            self.logger.warning("One of the descriptors is invalid.")
             return []
+
+        if self.matcher_name == 'lightglue':
+            if desc1 is self.ref_desc:
+                kpts1, kpts2 = self.ref_kpts, self.cur_kpts
+            else:
+                kpts1, kpts2 = self.cur_kpts, self.ref_kpts
+            good_matches = self.matcher.match(desc1, desc2, kpts1, kpts2, (self.h, self.w))
+            if len(good_matches) <= self.min_good_match_count_warning:
+                self.logger.warning(f'Only {len(good_matches)} good matches were found.')
+            return list(good_matches)
 
         if self.gpu:
             if desc1 is self.ref_desc:
@@ -552,11 +728,11 @@ class Stabilizer:
                         if m.distance < self.filter_ratio * n.distance:
                             good_matches.append(m)
         except cv2.error as e:
-            logger.error(f"Matches couldn't be found. \n Error: {e}")
+            self.logger.error(f"Matches couldn't be found. \n Error: {e}")
             return []
 
         if len(good_matches) <= self.min_good_match_count_warning:
-            logger.warning(f'Only {len(good_matches)} good matches were found.')
+            self.logger.warning(f'Only {len(good_matches)} good matches were found.')
 
         return list(good_matches)
 
@@ -576,32 +752,32 @@ class Stabilizer:
                     ransacReprojThreshold=self.ransac_epipolar_threshold,
                 )
             except cv2.error as e:
-                logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
+                self.logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
                 self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
                 inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
                 inliers_count = 'N/A'
                 if not self.benchmark:
-                    logger.warning("Re-using the last known transformation matrix.")
+                    self.logger.warning("Re-using the last known transformation matrix.")
             else:
                 if self.cur_trans_matrix is not None:
                     self.trans_matrix_last_known = self.cur_trans_matrix
                     inliers_count = sum(inliers.ravel().tolist())
                     if inliers_count <= self.min_inliers_match_count_warning:
-                        logger.warning(
+                        self.logger.warning(
                             f'Only {inliers_count} inliers points were used to estimate the transformation matrix.'
                         )
                 else:
-                    logger.warning('Transformation matrix is None.')
+                    self.logger.warning('Transformation matrix is None.')
                     self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
                     inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
                     inliers_count = 'N/A'
                     if not self.benchmark:
-                        logger.warning("Re-using the last known transformation matrix.")
+                        self.logger.warning("Re-using the last known transformation matrix.")
         else:
-            logger.warning('Not enough points to estimate the transformation matrix.')
+            self.logger.warning('Not enough points to estimate the transformation matrix.')
             self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
             if not self.benchmark:
-                logger.warning("Re-using the last known transformation matrix.")
+                self.logger.warning("Re-using the last known transformation matrix.")
             inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
             inliers_count = 'N/A'
 
@@ -628,7 +804,7 @@ class Stabilizer:
             Binary mask with 255 for regions to include and 0 for regions to exclude
         """
         if self.h is None or self.w is None:
-            logger.error("Reference frame is not set.")
+            self.logger.error("Reference frame is not set.")
             sys.exit(1)
 
         mask = np.full((self.h, self.w), 255, dtype=np.uint8)
@@ -691,14 +867,14 @@ class Stabilizer:
             if circles.ndim == 1:
                 circles = circles.reshape(1, -1)
             if circles.ndim != 2 or circles.shape[1] != 3:
-                logger.error("Circle format requires shape (N, 3) with [x_center, y_center, radius].")
+                self.logger.error("Circle format requires shape (N, 3) with [x_center, y_center, radius].")
                 sys.exit(1)
             for xc, yc, radius in circles:
                 radius_margin = max(int(round(radius * (1 + self.mask_margin_ratio))), 1)
                 cv2.circle(mask, (int(round(xc)), int(round(yc))), radius_margin, 0, thickness=-1)
 
         else:
-            logger.error(f"Unsupported box format: {box_format}")
+            self.logger.error(f"Unsupported box format: {box_format}")
             sys.exit(1)
 
         return mask
@@ -717,7 +893,7 @@ class Stabilizer:
             elif polygons.ndim == 3 and polygons.shape[2] == 2:
                 polygons = [poly for poly in polygons]
             else:
-                logger.error("Invalid polygon input shape.")
+                self.logger.error("Invalid polygon input shape.")
                 sys.exit(1)
 
         normalized_polygons = []
@@ -725,15 +901,15 @@ class Stabilizer:
             points = np.asarray(polygon, dtype=np.float32)
             if points.ndim == 1:
                 if points.size < 6 or points.size % 2 != 0:
-                    logger.error("Polygon rows must contain at least 3 (x, y) points.")
+                    self.logger.error("Polygon rows must contain at least 3 (x, y) points.")
                     sys.exit(1)
                 points = points.reshape(-1, 2)
             elif points.ndim != 2 or points.shape[1] != 2:
-                logger.error("Each polygon must be shape (N, 2) or flattened [x1, y1, ..., xN, yN].")
+                self.logger.error("Each polygon must be shape (N, 2) or flattened [x1, y1, ..., xN, yN].")
                 sys.exit(1)
 
             if points.shape[0] < 3:
-                logger.error("Polygons must have at least 3 vertices.")
+                self.logger.error("Polygons must have at least 3 vertices.")
                 sys.exit(1)
             normalized_polygons.append(points)
 
@@ -753,10 +929,10 @@ class Stabilizer:
         if frame is None:
             return None
         if self.w is None or self.h is None:
-            logger.error("Reference frame is not set.")
+            self.logger.error("Reference frame is not set.")
             sys.exit(1)
         if self.cur_trans_matrix is None:
-            logger.warning("Transformation matrix is None.")
+            self.logger.warning("Transformation matrix is None.")
             return frame
         if self.gpu:
             self._gpu_warp_buf.upload(frame, self.gpu_stream)
@@ -800,7 +976,7 @@ class Stabilizer:
         elif in_box_format == 'four':
             boxes_four = boxes
         else:
-            logger.error(f"Unsupported input box format: {in_box_format}")
+            self.logger.error(f"Unsupported input box format: {in_box_format}")
             return boxes
 
         # Transform the four corner points
@@ -820,12 +996,12 @@ class Stabilizer:
         elif out_box_format == 'xywha':
             # For xywha output, we need to compute angle from transformed corners
             # This is an approximation - we compute the angle from the first two corners
-            logger.warning(
+            self.logger.warning(
                 "Converting to 'xywha' format after transformation may lose precision for non-uniform scaling. Consider using 'four' format."
             )
             return self._four2xywha(boxes_transformed)
         else:
-            logger.error(f"Unsupported output box format: {out_box_format}")
+            self.logger.error(f"Unsupported output box format: {out_box_format}")
             return boxes_transformed
 
     def get_cur_frame(self) -> Union[np.ndarray, None]:
@@ -937,10 +1113,20 @@ class Stabilizer:
         if self.gpu and self.detector_name not in self.VALID_GPU_DETECTORS:
             raise ValueError(
                 f"detector '{self.detector_name}' has no CUDA implementation; gpu=True supports only "
-                f"{sorted(self.VALID_GPU_DETECTORS)}. See docs/cuda.md."
+                f"{sorted(self.VALID_GPU_DETECTORS)}. For deep-learning detectors use device='cuda' instead. "
+                f"See docs/cuda.md."
             )
         if self.matcher_name not in self.VALID_MATCHERS:
             raise ValueError(f"Invalid matcher: {self.matcher_name}. Choose from {self.VALID_MATCHERS}")
+        if self.matcher_name == 'lightglue' and self.detector_name not in self.LIGHTGLUE_FEATURE_NAMES:
+            raise ValueError(
+                f"matcher_name='lightglue' is only compatible with detectors {sorted(self.LIGHTGLUE_FEATURE_NAMES)}; "
+                f"got detector_name='{self.detector_name}'."
+            )
+        if self.device not in self.VALID_DEVICES:
+            raise ValueError(f"Invalid device: {self.device}. Choose from {self.VALID_DEVICES}")
+        if not (0.0 <= self.loftr_confidence <= 1.0):
+            raise ValueError("Invalid loftr_confidence. It should be in the range [0.0, 1.0]")
         if self.filter_type not in self.VALID_FILTER_TYPES:
             raise ValueError(f"Invalid filter type: {self.filter_type}. Choose from {self.VALID_FILTER_TYPES}")
         if self.transformation_type not in self.VALID_TRANSFORMATION_TYPES:

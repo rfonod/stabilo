@@ -90,7 +90,7 @@ So `Stabilizer(gpu=True)` will raise `ValueError: GPU is enabled but no CUDA-ena
   - Windows: Visual Studio Build Tools, matching the MSVC version supported by the CUDA Toolkit in use (same NVIDIA installation guide has the compatibility table).
 - CMake (recent version; the OpenCV 5.x build requires a fairly modern CMake). Check with `cmake --version`; if the distro's package is old, install a newer one via `pip install cmake` or from [cmake.org](https://cmake.org/download/).
 - Python build tooling: `pip install --upgrade pip` (>= 19.3), plus `numpy`.
-- **Video I/O support (Linux).** OpenCV's CMake step silently disables FFMPEG (and thus `cv2.VideoCapture`/`VideoWriter`, which `scripts/stabilize_video.py`/`stabilize_boxes.py` both need) if the dev headers aren't found; it does *not* fail loudly, so this is easy to miss until a video won't open. Install before building:
+- **Video I/O support (Linux).** OpenCV's CMake step silently disables FFMPEG (and thus `cv2.VideoCapture`/`VideoWriter`, which `stabilo video`/`stabilo tracks` both need) if the dev headers aren't found; it does *not* fail loudly, so this is easy to miss until a video won't open. Install before building:
 
   ```bash
   # Debian/Ubuntu
@@ -287,7 +287,7 @@ pip install pytest ruff matplotlib   # dev extras, for the test suite / lint
 ```bash
 pip install stabilo --no-deps
 pip install pyyaml tqdm   # core runtime deps other than opencv and numpy (both already installed)
-pip install matplotlib   # optional, only needed for scripts/find_thresholds/ (the `extras` install group)
+pip install matplotlib   # optional, only needed for scripts/find_threshold_models.py (the `extras` install group)
 ```
 There's no local `tests/` directory in this path, so `pytest`/`ruff` aren't relevant; use the clone/fork path above if the CUDA build needs to be tested against stabilo's test suite.
 
@@ -311,8 +311,8 @@ warped = stab.warp_cur_frame()
 Or via the CLI scripts:
 
 ```bash
-python scripts/stabilize_video.py path/to/video.mp4 --gpu --save
-python scripts/stabilize_boxes.py path/to/video.mp4 --gpu --save
+stabilo video path/to/video.mp4 --gpu --save
+stabilo tracks path/to/video.mp4 --gpu --save
 ```
 
 Multi-GPU machines: pass `gpu_device_id` (or `--gpu-device-id`) to pick which CUDA device to use.
@@ -336,8 +336,8 @@ Measured on an RTX 4090, OpenCV 5.0.0 + opencv_contrib 5.0.0, `detector_name='or
 Reproduce a single run with `STABILO_PROFILE=1` (enables the existing `@timer`-decorated method prints without editing source):
 
 ```bash
-STABILO_PROFILE=1 python scripts/stabilize_video.py path/to/video.mp4 --gpu --save --detector-name orb 1> gpu.log
-STABILO_PROFILE=1 python scripts/stabilize_video.py path/to/video.mp4 --save --detector-name orb 1> cpu.log
+STABILO_PROFILE=1 stabilo video path/to/video.mp4 --gpu --save --detector-name orb 1> gpu.log
+STABILO_PROFILE=1 stabilo video path/to/video.mp4 --save --detector-name orb 1> cpu.log
 awk '{sum[$1]+=$(NF-1); n[$1]++} END {for (s in sum) printf "%-35s avg %8.2f ms (n=%d)\n", s, sum[s]/n[s], n[s]}' gpu.log | sort
 awk '{sum[$1]+=$(NF-1); n[$1]++} END {for (s in sum) printf "%-35s avg %8.2f ms (n=%d)\n", s, sum[s]/n[s], n[s]}' cpu.log | sort
 ```
@@ -346,7 +346,7 @@ For a steadier read on a shared or otherwise busy machine, average several runs 
 
 ```bash
 for i in $(seq 1 5); do
-  STABILO_PROFILE=1 python scripts/stabilize_video.py path/to/video.mp4 --gpu --save --detector-name orb 1> gpu_run$i.log
+  STABILO_PROFILE=1 stabilo video path/to/video.mp4 --gpu --save --detector-name orb 1> gpu_run$i.log
 done
 awk '{sum[$1]+=$(NF-1); n[$1]++} END {for (s in sum) printf "%-35s avg %8.2f ms (n=%d)\n", s, sum[s]/n[s], n[s]}' gpu_run*.log | sort
 ```

@@ -4,11 +4,13 @@
 import argparse
 import platform
 import sys
+from pathlib import Path
 
 import cv2
 import numpy as np
 from tqdm import tqdm
 
+from stabilo import Stabilizer
 from stabilo.utils import detect_delimiter, load_config
 
 MACOS, LINUX, WINDOWS = (platform.system() == x for x in ['Darwin', 'Linux', 'Windows'])
@@ -35,15 +37,136 @@ ENCODING_NUM_COLS = {
     'circle': 3,
 }
 
+
+class StabiloHelpFormatter(argparse.HelpFormatter):
+    """
+    Wrap prose (argument group descriptions) to the terminal width, but leave pre-formatted
+    multi-line blocks such as the examples epilog exactly as written.
+    """
+
+    def _fill_text(self, text, width, indent):
+        if '\n' in text.strip():
+            return ''.join(indent + line for line in text.splitlines(keepends=True))
+        return super()._fill_text(text, width, indent)
+
+
+def add_stabilo_config_arguments(parser):
+    """
+    Register the Stabilizer configuration flags shared by the 'video' and 'tracks' subcommands.
+
+    The argument groups mirror the sections of stabilo/cfg/default.yaml. Options without a flag
+    below (detector-specific weights, LoFTR confidence, warning thresholds) are reachable through
+    --custom-config.
+    """
+    group = parser.add_argument_group(
+        "stabilo configuration file",
+        "Precedence: built-in defaults < --custom-config file < explicit CLI flags below.",
+    )
+    group.add_argument("--custom-config", "-cc", type=Path, help="custom stabilo config file (YAML)")
+
+    group = parser.add_argument_group(
+        "stabilo: feature detection",
+        "'xfeat', 'disk', 'dedode', 'keynet', and 'loftr' are learning-based; they download pretrained "
+        "weights on first use, need more memory (lower --downsample-ratio for large frames), and, except "
+        "for 'keynet', are upright models that degrade under large in-plane rotation.",
+    )
+    group.add_argument(
+        "--detector-name", "-dn", type=str, choices=Stabilizer.VALID_DETECTORS, help="detector type [default: orb]"
+    )
+    group.add_argument("--max-features", "-mf", type=int, help="max features to detect [default: 2000]")
+    group.add_argument(
+        "--ref-multiplier",
+        "-rm",
+        type=float,
+        help="multiplier for max features in reference frame (ref_multiplier x max_features) [default: 2]",
+    )
+
+    group = parser.add_argument_group(
+        "stabilo: feature matching and filtering",
+        "'lightglue' is a learned matcher usable with the 'disk', 'dedode', and 'keynet' detectors; it does "
+        "its own filtering. 'loftr' is detector-free and ignores these options entirely.",
+    )
+    group.add_argument(
+        "--matcher-name", "-mn", type=str, choices=Stabilizer.VALID_MATCHERS, help="matcher type [default: bf]"
+    )
+    group.add_argument(
+        "--filter-type",
+        "-ft",
+        type=str,
+        choices=Stabilizer.VALID_FILTER_TYPES,
+        help="filter type for the match filter [default: ratio]",
+    )
+    group.add_argument("--filter-ratio", "-fr", type=float, help="filter ratio for the match filter [default: 0.9]")
+
+    group = parser.add_argument_group("stabilo: transformation estimation")
+    group.add_argument(
+        "--transformation-type",
+        "-tt",
+        type=str,
+        choices=Stabilizer.VALID_TRANSFORMATION_TYPES,
+        help="transformation type [default: projective]",
+    )
+    group.add_argument("--ransac-method", "-r", type=int, help="RANSAC method [default: 38 (MAGSAC++)]")
+    group.add_argument(
+        "--ransac-epipolar-threshold", "-ret", type=float, help="RANSAC epipolar threshold [default: 2.0]"
+    )
+    group.add_argument("--ransac-max-iter", "-rmi", type=int, help="RANSAC maximum iterations [default: 5000]")
+    group.add_argument("--ransac-confidence", "-rc", type=float, help="RANSAC confidence [default: 0.999999]")
+
+    group = parser.add_argument_group("stabilo: image pre-processing")
+    group.add_argument(
+        "--clahe",
+        "-c",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="apply CLAHE to grayscale images [default: False]",
+    )
+    group.add_argument(
+        "--downsample-ratio",
+        "-dr",
+        type=float,
+        help="detect on frames resized by this factor, then rescale keypoints [default: 0.5]",
+    )
+    group.add_argument("--mask-margin-ratio", "-mmr", type=float, help="mask margin ratio [default: 0.15]")
+
+    group = parser.add_argument_group(
+        "stabilo: hardware acceleration",
+        "--gpu is OpenCV CUDA acceleration for the classical detectors (currently 'orb' only, and it needs a "
+        "CUDA-enabled OpenCV build, see docs/cuda.md). --device selects the torch device for the learning-based "
+        "detectors and matchers. The two are independent and cannot be combined.",
+    )
+    group.add_argument(
+        "--gpu",
+        "-g",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="use CUDA GPU acceleration [default: False]",
+    )
+    group.add_argument("--gpu-device-id", "-gid", type=int, help="CUDA device index when --gpu is set [default: 0]")
+    group.add_argument(
+        "--device",
+        "-dv",
+        type=str,
+        choices=Stabilizer.VALID_DEVICES,
+        help="torch device for the learning-based detectors [default: auto]",
+    )
+
+    return parser
+
+
 def separate_cli_arguments(cli_args):
     """
-    Get the command-line arguments and the corresponding keyword
+    Get the command-line arguments and the corresponding keyword arguments for Stabilizer.
+
+    Precedence (lowest to highest): stabilo/cfg/default.yaml < --custom-config file < explicit CLI flags.
     """
     args = argparse.Namespace(**vars(cli_args))
-    kwargs = drop_none_values(vars(cli_args))
+    explicit_kwargs = drop_none_values(vars(cli_args))
 
+    kwargs = {}
     if args.custom_config:
         kwargs.update(load_config(args.custom_config))
+    kwargs.update(explicit_kwargs)
 
     kwargs['mask_use'] = not args.no_mask
     if hasattr(args, 'save_viz'):
@@ -51,11 +174,13 @@ def separate_cli_arguments(cli_args):
 
     return args, kwargs
 
+
 def drop_none_values(kwargs):
     """
     Drop None values from a dictionary.
     """
     return {k: v for k, v in kwargs.items() if v is not None}
+
 
 def load_tracks(args, logger):
     """
@@ -77,6 +202,7 @@ def load_tracks(args, logger):
         logger.info(f'Loaded tracks from {tracks_filepath}.')
     return tracks
 
+
 def load_exclusion_masks(args, logger):
     """
     Read the exclusion masks from a file. Supports all mask encodings: yolo, pascal, coco,
@@ -94,8 +220,14 @@ def load_exclusion_masks(args, logger):
     try:
         delimiter = detect_delimiter(mask_filepath)
         masks = np.loadtxt(mask_filepath, delimiter=delimiter)
-        boxes = get_boxes(masks, args.mask_frame_idx, args.mask_start_idx, args.mask_enc, logger,
-                          end_idx=getattr(args, 'mask_end_idx', None))
+        boxes = get_boxes(
+            masks,
+            args.mask_frame_idx,
+            args.mask_start_idx,
+            args.mask_enc,
+            logger,
+            end_idx=getattr(args, 'mask_end_idx', None),
+        )
     except Exception as e:
         logger.error(f'Error reading {mask_filepath}: {e}')
         sys.exit(1)
@@ -103,12 +235,20 @@ def load_exclusion_masks(args, logger):
         logger.info(f'Loaded {len(boxes)} exclusion masks.')
     return boxes
 
+
 def get_boxes_from_tracks(tracks, args, logger):
     """
     Get the bounding boxes from the tracks.
     """
-    return get_boxes(tracks, args.boxes_frame_idx, args.boxes_start_idx, args.boxes_enc, logger,
-                     end_idx=getattr(args, 'boxes_end_idx', None))
+    return get_boxes(
+        tracks,
+        args.boxes_frame_idx,
+        args.boxes_start_idx,
+        args.boxes_enc,
+        logger,
+        end_idx=getattr(args, 'boxes_end_idx', None),
+    )
+
 
 def get_boxes(data, frame_col_idx, start_idx, encoding, logger, end_idx=None):
     """
@@ -145,6 +285,7 @@ def get_boxes(data, frame_col_idx, start_idx, encoding, logger, end_idx=None):
         sys.exit(1)
     return boxes
 
+
 def get_boxes_for_frame(boxes, frame_num):
     """
     Get the exclusion masks (bounding boxes) for a specific frame.
@@ -152,6 +293,7 @@ def get_boxes_for_frame(boxes, frame_num):
     if boxes is None:
         return None
     return boxes[boxes[:, 0].astype(int) == frame_num, 1:]
+
 
 def initialize_read_streams(args, logger):
     """
@@ -169,9 +311,10 @@ def initialize_read_streams(args, logger):
     frame_count = int(reader.get(cv2.CAP_PROP_FRAME_COUNT))
     w = int(reader.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(reader.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = reader.get(cv2.CAP_PROP_FPS) # int() might be required, floats might produce error in MP4 codec
+    fps = reader.get(cv2.CAP_PROP_FPS)  # int() might be required, floats might produce error in MP4 codec
 
     return reader, frame_count, w, h, fps
+
 
 def initialize_write_streams(args, w, h, fps, logger):
     """
@@ -202,6 +345,7 @@ def initialize_write_streams(args, w, h, fps, logger):
 
     return writer_vid, writer_viz
 
+
 def initialize_track_write_stream(args, w, h, fps, logger):
     """
     Initialize video writer for the track visualization.
@@ -224,11 +368,13 @@ def initialize_track_write_stream(args, w, h, fps, logger):
 
     return writer_track
 
+
 def initialize_progress_bar(args, frame_count):
     """
     Initialize the progress bar.
     """
     return tqdm(total=frame_count, desc=f'Stabilizing {args.input}', unit='frames', leave=True, colour='green')
+
 
 def close_streams(args, reader, pbar, writer_vid=None, writer_viz=None, writer_track=None):
     """
@@ -244,6 +390,7 @@ def close_streams(args, reader, pbar, writer_vid=None, writer_viz=None, writer_t
         writer_track.release()
     if args.viz:
         cv2.destroyAllWindows()
+
 
 def draw_boxes(img, boxes, color=(0, 255, 0), box_format='xywh', line_type=cv2.LINE_AA):
     """
@@ -273,6 +420,7 @@ def draw_boxes(img, boxes, color=(0, 255, 0), box_format='xywh', line_type=cv2.L
             x_c, y_c, r = box[0], box[1], box[2]
             cv2.circle(img, (int(x_c), int(y_c)), max(1, int(r)), color, 2, line_type)
     return img
+
 
 def draw_text(img, text, font=cv2.FONT_HERSHEY_PLAIN, pos=(0, 0), scale=7, thickness=5, color_fg=(0, 255, 0)):
     """
