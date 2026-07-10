@@ -99,6 +99,72 @@ def test_explicit_cli_flags_override_custom_config(tmp_path):
     assert kwargs['clahe'] is True
 
 
+def test_custom_config_mask_use_and_viz_respected_when_flags_not_passed(tmp_path):
+    """Regression: --no-mask/--viz/--save-viz used to unconditionally override mask_use/viz
+    even when never passed on the CLI, defeating a --custom-config value."""
+    config_path = tmp_path / 'custom.yaml'
+    config_path.write_text("mask_use: false\nviz: true\n")
+
+    ns = argparse.Namespace(
+        input='x.mp4',
+        no_mask=False,  # not passed on the CLI -> config file's mask_use applies
+        viz=False,  # not passed on the CLI -> config file's viz applies
+        save_viz=False,
+        custom_config=config_path,
+    )
+    _, kwargs = separate_cli_arguments(ns)
+    assert kwargs['mask_use'] is False
+    assert kwargs['viz'] is True
+
+
+def test_explicit_no_mask_and_viz_flags_still_override_custom_config(tmp_path):
+    config_path = tmp_path / 'custom.yaml'
+    config_path.write_text("mask_use: true\nviz: false\n")
+
+    ns = argparse.Namespace(
+        input='x.mp4',
+        no_mask=True,  # explicitly passed -> must win over the config file
+        viz=True,  # explicitly passed -> must win over the config file
+        save_viz=False,
+        custom_config=config_path,
+    )
+    _, kwargs = separate_cli_arguments(ns)
+    assert kwargs['mask_use'] is False
+    assert kwargs['viz'] is True
+
+
+def test_cli_update_check_fires_once_end_to_end(tmp_path, monkeypatch):
+    """Regression: main() used to call check_for_updates() directly (not the *_once variant),
+    so a Stabilizer constructed during the same run fired the update check a second time."""
+    import cv2
+
+    import stabilo.version_check as vc
+
+    monkeypatch.delenv('STABILO_DISABLE_UPDATE_CHECK', raising=False)
+    monkeypatch.setattr(vc, '_cache_dir', lambda: tmp_path / 'cache')
+    vc._state['checked'] = False
+    calls = []
+    monkeypatch.setattr(vc, 'check_for_updates', lambda logger=None, blocking=False: calls.append(1))
+
+    video_path = tmp_path / 'clip.mp4'
+    w, h, n = 128, 96, 6
+    writer = cv2.VideoWriter(str(video_path), cv2.VideoWriter_fourcc(*'mp4v'), 5.0, (w, h))
+    if not writer.isOpened():
+        pytest.skip('no available VideoWriter codec')
+    rng = np.random.default_rng(0)
+    for _ in range(n):
+        writer.write(rng.integers(0, 256, (h, w, 3), dtype=np.uint8))
+    writer.release()
+    if not video_path.exists():
+        pytest.skip('VideoWriter produced no file')
+
+    try:
+        main(['video', str(video_path), '--save', '--no-mask', '--downsample-ratio', '1.0'])
+        assert len(calls) == 1
+    finally:
+        vc._state['checked'] = False
+
+
 def test_video_end_to_end(tmp_path, monkeypatch):
     import cv2
 
@@ -121,8 +187,8 @@ def test_video_end_to_end(tmp_path, monkeypatch):
 
 def _failed_estimation_stabilizer():
     """
-    A Stabilizer left in the state produced when RANSAC has too few correspondences:
-    cur_inliers_count is the string 'N/A' rather than an int.
+    A Stabilizer left in the state produced when RANSAC has too few correspondences to estimate
+    a transformation matrix.
     """
     frame = cv2.imread('tests/ND_before.jpg')
     frame = cv2.resize(frame, (1280, 720))
@@ -139,14 +205,14 @@ def _failed_estimation_stabilizer():
     return stab, frame
 
 
-def test_failed_estimation_leaves_non_int_inliers_count():
+def test_failed_estimation_leaves_none_inliers_count():
     stab, _ = _failed_estimation_stabilizer()
-    assert stab.cur_inliers_count == 'N/A'
+    assert stab.cur_inliers_count is None
     assert stab.get_cur_inliers_count() is None
 
 
 def test_render_visuals_survives_failed_estimation():
-    """Regression: the outlier count used to do int - 'N/A' and raise TypeError."""
+    """Regression: the outlier count used to do int - None and raise TypeError."""
     stab, frame = _failed_estimation_stabilizer()
     args = argparse.Namespace(debug=False, no_lines=False, no_boxes=True, ref_frame=0)
 

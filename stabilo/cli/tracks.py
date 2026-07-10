@@ -72,7 +72,6 @@ Notes:
       --downsample-ratio for large frames; 'loftr' scales quadratically with the pixel count.
 """
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -82,7 +81,6 @@ import numpy as np
 from stabilo import Stabilizer
 
 from .utils import (
-    ENCODING_NUM_COLS,
     ENCODING_TO_BOX_FORMAT,
     StabiloHelpFormatter,
     add_stabilo_config_arguments,
@@ -286,7 +284,7 @@ def save_stabilized_boxes(args, tracks, boxes_stab, logger):
                 mode='constant',
                 constant_values=np.nan,
             )
-        num_box_cols = ENCODING_NUM_COLS[args.boxes_enc]
+        num_box_cols = boxes_stab.shape[1]
         tracks_stab[:, args.boxes_start_idx : args.boxes_start_idx + num_box_cols] = boxes_stab
 
         np.savetxt(stabilized_tracks_filepath, tracks_stab, fmt='%g', delimiter=',')

@@ -14,7 +14,7 @@ import argparse
 
 from stabilo import __version__
 from stabilo.utils import setup_logger
-from stabilo.version_check import check_for_updates
+from stabilo.version_check import check_for_updates_once
 
 from . import config, tracks, video
 
@@ -44,5 +44,5 @@ def main(argv=None):
         parsers[args.command].error("At least one of --save, --viz, or --save-viz must be specified.")
 
     logger = setup_logger("stabilo.cli")
-    check_for_updates(logger)
+    check_for_updates_once(logger)
     args.func(args, logger)

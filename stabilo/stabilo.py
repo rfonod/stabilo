@@ -628,7 +628,7 @@ class Stabilizer:
 
         try:
             kpts, desc = detector.detectAndCompute(model_input, mask_ds)
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             self.logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
             return None, None, None
 
@@ -755,7 +755,7 @@ class Stabilizer:
                 self.logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
                 self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
                 inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
-                inliers_count = 'N/A'
+                inliers_count = None
                 if not self.benchmark:
                     self.logger.warning("Re-using the last known transformation matrix.")
             else:
@@ -770,7 +770,7 @@ class Stabilizer:
                     self.logger.warning('Transformation matrix is None.')
                     self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
                     inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
-                    inliers_count = 'N/A'
+                    inliers_count = None
                     if not self.benchmark:
                         self.logger.warning("Re-using the last known transformation matrix.")
         else:
@@ -779,7 +779,7 @@ class Stabilizer:
             if not self.benchmark:
                 self.logger.warning("Re-using the last known transformation matrix.")
             inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
-            inliers_count = 'N/A'
+            inliers_count = None
 
         self.cur_inliers = inliers
         self.cur_inliers_count = inliers_count
@@ -1027,7 +1027,7 @@ class Stabilizer:
         Get the number of inliers used to estimate the current transformation matrix.
         Returns None if unavailable (e.g., estimation failed or not yet computed).
         """
-        return self.cur_inliers_count if isinstance(self.cur_inliers_count, int) else None
+        return self.cur_inliers_count
 
     def get_cur_num_matches(self) -> Union[int, None]:
         """

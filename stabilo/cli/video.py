@@ -55,7 +55,6 @@ Notes:
       --downsample-ratio for large frames; 'loftr' scales quadratically with the pixel count.
 """
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -211,9 +210,9 @@ def render_stabilization_visuals(
                 cv2.line(overlay, (int(x1), int(y1)), (int(x2 + ref_frame.shape[1]), int(y2)), line[2], 2, cv2.LINE_AA)
 
             cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0, img)
+            return img, len(lines['inliers']), len(lines['outliers'])
 
-        match_count = len(lines['inliers']) + len(lines['outliers'])
-        return img, (match_count or None)
+        return img, None, None
 
     ref_frame = stabilizer.ref_frame_gray
     ref_frame = draw_mask(ref_frame, stabilizer.ref_mask)
@@ -229,9 +228,7 @@ def render_stabilization_visuals(
 
     imgs_upper = np.hstack((ref_frame, cur_frame))
     if not args.no_lines:
-        imgs_upper, match_count = draw_lines(imgs_upper, stabilizer.ref_pts, stabilizer.cur_pts)
-        inliers_count = stabilizer.get_cur_inliers_count()
-        outliers_count = None if match_count is None or inliers_count is None else match_count - inliers_count
+        imgs_upper, inliers_count, outliers_count = draw_lines(imgs_upper, stabilizer.ref_pts, stabilizer.cur_pts)
         pos_inliers = (250 + ref_frame.shape[1] // 2, 15)
         pos_outliers = (ref_frame.shape[1] // 2 + 1050, 15)
         draw_text(

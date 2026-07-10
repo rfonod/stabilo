@@ -166,11 +166,13 @@ def separate_cli_arguments(cli_args):
     kwargs = {}
     if args.custom_config:
         kwargs.update(load_config(args.custom_config))
+    explicit_kwargs.pop('viz', None)
     kwargs.update(explicit_kwargs)
 
-    kwargs['mask_use'] = not args.no_mask
-    if hasattr(args, 'save_viz'):
-        kwargs['viz'] = args.viz or args.save_viz
+    if args.no_mask:
+        kwargs['mask_use'] = False
+    if hasattr(args, 'save_viz') and (args.viz or args.save_viz):
+        kwargs['viz'] = True
 
     return args, kwargs
 
