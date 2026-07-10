@@ -10,7 +10,7 @@ import pytest
 
 from stabilo import Stabilizer, __version__
 from stabilo.cli import main
-from stabilo.cli.utils import separate_cli_arguments
+from stabilo.cli.utils import WINDOWS, separate_cli_arguments
 from stabilo.cli.video import render_stabilization_visuals
 
 
@@ -182,7 +182,8 @@ def test_video_end_to_end(tmp_path, monkeypatch):
         pytest.skip('VideoWriter produced no file')
 
     main(['video', str(video_path), '--save', '--no-mask', '--downsample-ratio', '1.0'])
-    assert (tmp_path / 'clip_stab.mp4').exists()
+    suffix = 'avi' if WINDOWS else 'mp4'
+    assert (tmp_path / f'clip_stab.{suffix}').exists()
 
 
 def _failed_estimation_stabilizer():
