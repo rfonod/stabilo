@@ -3,7 +3,7 @@
 # Author: Robert Fonod (robert.fonod@ieee.org)
 
 """
-stabilize_boxes.py - Stabilize bounding boxes using the stabilo library.
+tracks.py - Stabilize per-frame object annotations (tracks) using the stabilo library.
 
 Description:
     This script stabilizes bounding boxes (BBs) in a video using the 'stabilo' library. It reads a video file and a
@@ -14,7 +14,7 @@ Description:
     script considers the 0-th frame as the reference frame and uses the BBs as exclusion masks.
 
 Usage:
-    python stabilize_boxes.py <input> [options]
+    stabilo tracks <input> [options]
 
 Arguments:
     input              : Filepath to the input video file.
@@ -47,55 +47,46 @@ Visualization Options:
     --tail-radius TAIL_RADIUS : Tail radius for visualization (default: 12).
     --canvas-x CANVAS_X : Canvas enlargement factor (>= 1, default: 1.5).
 
-Stabilo Configuration:
-    --custom-config    : Path to a config file that overrides the default stabilo parameters or the CLI arguments below.
-    --detector-name DETECT : Feature detector. Choices: 'orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze' (default: orb).
-    --matcher-name MATCHER    : Feature matcher. Choices: 'bf', 'flann' (default: bf).
-    --filter-type FILTER_TYPE : Type of match filter. Choices: 'none', 'ratio', 'distance' (default: ratio).
-    --transformation-type TRANSFORMATION_TYPE : Transformation. Choices: 'projective', 'affine' (default: projective).
-    --clahe            : Apply CLAHE to grayscale images (default: False).
-    --downsample-ratio DOWNSAMPLE_RATIO : Downsample ratio for the input video (default: 0.5).
-    --max-features MAX_FEATURES   : Maximum number of features to detect (default: 2000).
-    --ref-multiplier REF_MULTIPLIER : Multiplier for max features in reference frame (default: 2).
-    --filter-ratio FILTER_RATIO : Filter ratio for the match filter (default: 0.9).
-    --ransac-method RANSAC_METHOD : RANSAC method (default: 38 (MAGSAC++)).
-    --ransac-epipolar-threshold RANSAC_EPIPOLAR_THRESHOLD : RANSAC epipolar threshold (default: 2.0).
-    --ransac-max-iter RANSAC_MAX_ITER : RANSAC maximum iterations (default: 5000).
-    --ransac-confidence RANSAC_CONFIDENCE : RANSAC confidence (default: 0.999999).
-    --mask-margin-ratio MASK_MARGIN_RATIO : Mask margin ratio (default: 0.15).
-    --gpu              : Use CUDA GPU acceleration (requires a CUDA-enabled OpenCV, see docs/cuda.md) (default: False).
-    --gpu-device-id GPU_DEVICE_ID : CUDA device index to use when --gpu is set (default: 0).
+Run 'stabilo tracks --help' for the full, grouped list of options. Stabilizer options not exposed as
+CLI flags (detector-specific weights, LoFTR confidence, warning thresholds) can be set through a
+config file passed to --custom-config; see stabilo/cfg/default.yaml for every key and its default.
+Resolution order is: built-in defaults < --custom-config file < explicit CLI flags.
 
 Examples:
     1. Stabilize the tracks (BBs) using the default stabilo parameters and a custom reference frame at index 100:
-        python stabilize_boxes.py path/to/video.mp4 --save --ref-frame 100
+        stabilo tracks path/to/video.mp4 --save --ref-frame 100
     2. Visualize and save the stabilization process with custom visualization speed (20 ms):
-        python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --speed 20
+        stabilo tracks path/to/video.mp4 --viz --save-viz --speed 20
     3. Stabilize the tracks without exclusion masks and save the visualization and stabilized tracks:
-        python stabilize_boxes.py path/to/video.mp4 --no-mask --save-viz --save
+        stabilo tracks path/to/video.mp4 --no-mask --save-viz --save
     4. Stabilize the tracks using a custom config file and custom mask file. Save the stabilized tracks:
-        python stabilize_boxes.py path/to/video.mp4 --save --custom-config path/to/config.yaml --mask-path path/to/mask.txt
+        stabilo tracks path/to/video.mp4 --save --custom-config path/to/config.yaml --mask-path path/to/mask.txt
     5. Stabilize the tracks using a custom config file and save the visualization with custom tail length and radius:
-        python stabilize_boxes.py path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
+        stabilo tracks path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
     6. Stabilize the tracks using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see docs/cuda.md):
-        python stabilize_boxes.py path/to/video.mp4 --gpu --save
+        stabilo tracks path/to/video.mp4 --gpu --save
 
 Notes:
     - Press 'q' to quit the real-time visualization (--viz option).
+    - The learning-based detectors need considerably more memory than the classical ones. Lower
+      --downsample-ratio for large frames; 'loftr' scales quadratically with the pixel count.
 """
 
-import argparse
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
-from utils import (
+
+from stabilo import Stabilizer
+
+from .utils import (
+    ENCODING_TO_BOX_FORMAT,
+    StabiloHelpFormatter,
+    add_stabilo_config_arguments,
     close_streams,
     draw_boxes,
     draw_text,
-    ENCODING_NUM_COLS,
-    ENCODING_TO_BOX_FORMAT,
     get_boxes_for_frame,
     get_boxes_from_tracks,
     initialize_progress_bar,
@@ -106,14 +97,21 @@ from utils import (
     separate_cli_arguments,
 )
 
-from stabilo import Stabilizer
-from stabilo.utils import setup_logger
+EXAMPLES = """\
+examples:
+  stabilo tracks video.mp4 --save                         stabilize the tracks and save them
+  stabilo tracks video.mp4 --save --ref-frame 100         stabilize against frame 100
+  stabilo tracks video.mp4 --viz --save-viz --speed 20    preview and record the visualization
+  stabilo tracks video.mp4 --no-mask --save               ignore the exclusion masks
+  stabilo tracks video.mp4 -cc config.yaml --save         take defaults from a config file
+  stabilo tracks video.mp4 -dn xfeat -dr 0.25 --save      learning-based detector on smaller frames
+  stabilo tracks video.mp4 --gpu --save                   OpenCV CUDA (see docs/cuda.md)
+"""
 
-logger = setup_logger(__name__)
 
-def stabilize_boxes(args, kwargs):
+def stabilize_tracks(args, kwargs, logger):
     """
-    Stabilize a bounding boxes using the stabilo library.
+    Stabilize per-frame object annotations (tracks) using the stabilo library.
     """
     reader, frame_count, w, h, fps = initialize_read_streams(args, logger)
     writer = initialize_track_write_stream(args, w, h, fps, logger)
@@ -129,9 +127,9 @@ def stabilize_boxes(args, kwargs):
         mask_box_format = boxes_box_format
         logger.info("Using the bounding boxes found in tracks as exclusion masks.")
 
-    pbar = initialize_progress_bar(args, frame_count)
-
     stabilizer = Stabilizer(**kwargs)
+
+    pbar = initialize_progress_bar(args, frame_count)
 
     ref_frame_number = args.ref_frame
     boxes_stab = []
@@ -162,13 +160,22 @@ def stabilize_boxes(args, kwargs):
                 stabilizer.stabilize(frame, mask, box_format=mask_box_format)
                 cur_trans_matrix = stabilizer.get_cur_trans_matrix()
                 boxes_frame_stab = stabilizer.transform_boxes(
-                    boxes_frame, cur_trans_matrix,
-                    in_box_format=boxes_box_format, out_box_format=boxes_box_format
+                    boxes_frame, cur_trans_matrix, in_box_format=boxes_box_format, out_box_format=boxes_box_format
                 )
             boxes_stab.append(boxes_frame_stab)
 
-            if (args.viz or args.save_viz):
-                img = visualize_box_movements(args, boxes_frame, boxes_frame_stab, prev_centers, prev_centers_stab, w, h, frame_num, boxes_box_format)
+            if args.viz or args.save_viz:
+                img = visualize_box_movements(
+                    args,
+                    boxes_frame,
+                    boxes_frame_stab,
+                    prev_centers,
+                    prev_centers_stab,
+                    w,
+                    h,
+                    frame_num,
+                    boxes_box_format,
+                )
                 if args.viz:
                     cv2.imshow('Stabilization Process Visualization', img)
                     if cv2.waitKey(args.speed) & 0xFF == ord('q'):
@@ -183,11 +190,14 @@ def stabilize_boxes(args, kwargs):
     except Exception as e:
         logger.error(f'Error processing frames: {e}')
     else:
-        save_stabilized_boxes(args, tracks, boxes_stab)
+        save_stabilized_boxes(args, tracks, boxes_stab, logger)
     finally:
         close_streams(args, reader, pbar, writer_track=writer)
 
-def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_stab, w, h, frame_num, boxes_box_format='xywh'):
+
+def visualize_box_movements(
+    args, boxes, boxes_stab, prev_centers, prev_centers_stab, w, h, frame_num, boxes_box_format='xywh'
+):
     """
     Display bounding box trajectories on a canvas.
     """
@@ -198,7 +208,7 @@ def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_
     top_left = (center_x - w // 2, center_y - h // 2)
     bottom_right = (center_x + w // 2, center_y + h // 2)
     cv2.rectangle(img, top_left, bottom_right, (211, 211, 211), 2)
-    draw_text(img, 'Reference frame boundaries', pos=(top_left[0], top_left[1] - 70), scale=5, color_fg=3*(211, ))
+    draw_text(img, 'Reference frame boundaries', pos=(top_left[0], top_left[1] - 70), scale=5, color_fg=3 * (211,))
 
     dx, dy = top_left
 
@@ -240,6 +250,7 @@ def visualize_box_movements(args, boxes, boxes_stab, prev_centers, prev_centers_
 
     return img
 
+
 def draw_tails(img, points, color, max_frames=30, max_radius=13):
     """
     Draw tails on an image.
@@ -251,7 +262,8 @@ def draw_tails(img, points, color, max_frames=30, max_radius=13):
         for center in center_points:
             cv2.circle(img, center, radius, color, -1)
 
-def save_stabilized_boxes(args, tracks, boxes_stab):
+
+def save_stabilized_boxes(args, tracks, boxes_stab, logger):
     """
     Save the stabilized bounding boxes to a file.
     """
@@ -266,82 +278,108 @@ def save_stabilized_boxes(args, tracks, boxes_stab):
         boxes_stab = np.concatenate(boxes_stab, axis=0)
         tracks_stab = np.copy(tracks)
         if boxes_stab.shape[0] < tracks_stab.shape[0]:
-            boxes_stab = np.pad(boxes_stab, ((0, tracks_stab.shape[0] - boxes_stab.shape[0]), (0, 0)), mode='constant', constant_values=np.nan)
-        num_box_cols = ENCODING_NUM_COLS[args.boxes_enc]
-        tracks_stab[:, args.boxes_start_idx:args.boxes_start_idx + num_box_cols] = boxes_stab
+            boxes_stab = np.pad(
+                boxes_stab,
+                ((0, tracks_stab.shape[0] - boxes_stab.shape[0]), (0, 0)),
+                mode='constant',
+                constant_values=np.nan,
+            )
+        num_box_cols = boxes_stab.shape[1]
+        tracks_stab[:, args.boxes_start_idx : args.boxes_start_idx + num_box_cols] = boxes_stab
 
         np.savetxt(stabilized_tracks_filepath, tracks_stab, fmt='%g', delimiter=',')
         logger.info(f'Saved the stabilized bounding boxes in YOLO format to {stabilized_tracks_filepath}.')
 
-def get_cli_arguments():
+
+def configure_parser(subparsers):
     """
-    Parse the command-line arguments.
+    Register the 'tracks' subcommand and its arguments.
     """
-    parser = argparse.ArgumentParser(description="Stabilize bounding boxes using the stabilo library.")
+    parser = subparsers.add_parser(
+        "tracks",
+        help="stabilize per-frame object annotations (tracks) with respect to a reference frame",
+        description="Stabilize per-frame object annotations (tracks) using the stabilo library.",
+        epilog=EXAMPLES,
+        formatter_class=StabiloHelpFormatter,
+    )
 
-    # main options
-    parser.add_argument("input", type=Path, help="input video filepath")
-    parser.add_argument("--output", "-o", type=Path, help="output folder [default: same as input]")
-    parser.add_argument("--save", "-s", action="store_true", help="save the stabilized tracks to a file")
-    parser.add_argument("--ref-frame", "-rf", type=int, default=0, help="custom reference frame index")
+    group = parser.add_argument_group("input and output")
+    group.add_argument("input", type=Path, help="input video filepath")
+    group.add_argument("--output", "-o", type=Path, help="output folder [default: same as input]")
+    group.add_argument("--save", "-s", action="store_true", help="save the stabilized tracks to a file")
+    group.add_argument("--ref-frame", "-rf", type=int, default=0, help="custom reference frame index [default: 0]")
 
-    # tracks options
-    parser.add_argument("--tracks", "-t", type=Path, help="filepath to the tracks file [default: input with .txt extension]")
-    parser.add_argument("--boxes-frame-idx", "-bfi", type=int, default=0, help="frame number column index in the tracks file")
-    parser.add_argument("--boxes-start-idx", "-bsi", type=int, default=2, help="start column index for bbox in the tracks file")
-    parser.add_argument("--boxes-end-idx", "-bei", type=int, default=None,
-                        help="exclusive end column index for box columns [default: auto from format, required for 'polygon' that does not span to the last column]")
-    parser.add_argument("--boxes-enc", "-be", type=str, default="yolo",
-                        choices=['yolo', 'pascal', 'coco', 'xywha', 'four'], help="bbox encoding")
+    group = parser.add_argument_group("tracks to stabilize")
+    group.add_argument(
+        "--tracks", "-t", type=Path, help="filepath to the tracks file [default: input with .txt extension]"
+    )
+    group.add_argument(
+        "--boxes-frame-idx", "-bfi", type=int, default=0, help="frame number column index in the tracks file"
+    )
+    group.add_argument(
+        "--boxes-start-idx", "-bsi", type=int, default=2, help="start column index for bbox in the tracks file"
+    )
+    group.add_argument(
+        "--boxes-end-idx",
+        "-bei",
+        type=int,
+        default=None,
+        help="exclusive end column index for box columns [default: auto from format, required for 'polygon' that does not span to the last column]",
+    )
+    group.add_argument(
+        "--boxes-enc",
+        "-be",
+        type=str,
+        default="yolo",
+        choices=['yolo', 'pascal', 'coco', 'xywha', 'four'],
+        help="bbox encoding [default: yolo]",
+    )
 
-    # mask options
-    parser.add_argument("--no-mask", "-nm", action="store_true", help="disable exclusion masks during stabilization")
-    parser.add_argument("--mask-path", "-mp", type=Path, help="custom mask file for stabilization [default: same as boxes]")
-    parser.add_argument("--mask-frame-idx", "-mfi", type=int, default=0, help="frame number column index in mask file")
-    parser.add_argument("--mask-start-idx", "-msi", type=int, default=2, help="start column index for bbox in mask file")
-    parser.add_argument("--mask-end-idx", "-mei", type=int, default=None,
-                        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]")
-    parser.add_argument("--mask-enc", "-me", type=str, default="yolo",
-                        choices=['yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle'],
-                        help="mask format")
+    group = parser.add_argument_group(
+        "exclusion masks", "Regions (e.g. moving vehicles) excluded from feature detection."
+    )
+    group.add_argument("--no-mask", "-nm", action="store_true", help="disable exclusion masks during stabilization")
+    group.add_argument(
+        "--mask-path", "-mp", type=Path, help="custom mask file for stabilization [default: same as boxes]"
+    )
+    group.add_argument("--mask-frame-idx", "-mfi", type=int, default=0, help="frame number column index in mask file")
+    group.add_argument("--mask-start-idx", "-msi", type=int, default=2, help="start column index for bbox in mask file")
+    group.add_argument(
+        "--mask-end-idx",
+        "-mei",
+        type=int,
+        default=None,
+        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]",
+    )
+    group.add_argument(
+        "--mask-enc",
+        "-me",
+        type=str,
+        default="yolo",
+        choices=['yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle'],
+        help="mask format [default: yolo]",
+    )
 
-    # visualization options
-    parser.add_argument("--viz", "-v", action="store_true", help="show the stabilized and un-stabilized tracks")
-    parser.add_argument("--save-viz", "-sv", action="store_true", help="save the visualization as a video at original FPS")
-    parser.add_argument("--speed", "-sp", type=int, default=10, help="visualization speed in ms (0 for manual control)")
-    parser.add_argument("--tail-length", "-tl", type=int, default=40, help="tail length for visualization")
-    parser.add_argument("--tail-radius", "-tr", type=int, default=12, help="tail radius for visualization")
-    parser.add_argument("--canvas-x", "-cx", type=float, default=1.5, help="canvas enlargement factor (>= 1)")
+    group = parser.add_argument_group("visualization")
+    group.add_argument("--viz", "-v", action="store_true", help="show the stabilized and un-stabilized tracks")
+    group.add_argument(
+        "--save-viz", "-sv", action="store_true", help="save the visualization as a video at original FPS"
+    )
+    group.add_argument("--speed", "-sp", type=int, default=10, help="visualization speed in ms (0 for manual control)")
+    group.add_argument("--tail-length", "-tl", type=int, default=40, help="tail length for visualization")
+    group.add_argument("--tail-radius", "-tr", type=int, default=12, help="tail radius for visualization")
+    group.add_argument("--canvas-x", "-cx", type=float, default=1.5, help="canvas enlargement factor (>= 1)")
 
-    # stabilo custom configuration file (override default stabilo parameters or the below CLI arguments)
-    parser.add_argument("--custom-config", "-cc", type=Path, help="custom stabilo config file")
+    add_stabilo_config_arguments(parser)
 
-    # stabilo configuration options (override default stabilo parameters, see stabilo/cfg/default.yaml)
-    parser.add_argument("--detector-name", "-dn", type=str, choices=['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze'], help="detector type [default: orb]")
-    parser.add_argument("--matcher-name", "-mn", type=str, choices=['bf', 'flann'], help="matcher type [default: bf]")
-    parser.add_argument("--filter-type", "-ft", type=str, choices=['none', 'ratio', 'distance'], help="filter type for the match filter [default: ratio]")
-    parser.add_argument("--transformation-type", "-tt", type=str, choices=['projective', 'affine'], help="transformation type [default: projective]")
-    parser.add_argument("--clahe", "-c", action="store_true", help="apply CLAHE to grayscale images [default: False]")
-    parser.add_argument("--downsample-ratio", "-dr", type=float, help="downsample ratio [default: 0.5]")
-    parser.add_argument("--max-features", "-mf", type=int, help="max features to detect [default: 2000]")
-    parser.add_argument("--ref-multiplier", "-rm", type=float, help="multiplier for max features in reference frame (ref_multiplier x max_features) [default: 2]")
-    parser.add_argument("--filter-ratio", "-fr", type=float, help="filter ratio for the match filter [default: 0.9]")
-    parser.add_argument("--ransac-method", "-r", type=int, help="RANSAC method [default: 38 (MAGSAC++)]")
-    parser.add_argument("--ransac-epipolar-threshold", "-ret", type=float, help="RANSAC epipolar threshold [default: 2.0]")
-    parser.add_argument("--ransac-max-iter", "-rmi", type=int, help="RANSAC maximum iterations [default: 5000]")
-    parser.add_argument("--ransac-confidence", "-rc", type=float, help="RANSAC confidence [default: 0.999999]")
-    parser.add_argument("--mask-margin-ratio", "-mmr", type=float, help="mask margin ratio [default: 0.15]")
-    parser.add_argument("--gpu", "-g", action="store_true", help="use CUDA GPU acceleration [default: False]")
-    parser.add_argument("--gpu-device-id", "-gid", type=int, help="CUDA device index when --gpu is set [default: 0]")
+    parser.set_defaults(func=run)
+    return parser
 
-    cli_args = parser.parse_args()
 
-    if not (cli_args.save or cli_args.viz or cli_args.save_viz):
-        parser.error("At least one of --save, --viz, or --save-viz must be specified.")
-
-    return cli_args
-
-if __name__ == "__main__":
-    cli_args = get_cli_arguments()
-    args, kwargs = separate_cli_arguments(cli_args)
-    stabilize_boxes(args, kwargs)
+def run(args, logger):
+    """
+    Execute the 'tracks' subcommand.
+    """
+    _, kwargs = separate_cli_arguments(args)
+    kwargs['logger'] = logger
+    stabilize_tracks(args, kwargs, logger)

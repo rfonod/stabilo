@@ -2,6 +2,7 @@
 # Author: Robert Fonod (robert.fonod@ieee.org)
 
 import logging
+import os
 import sys
 import time
 
@@ -17,14 +18,18 @@ def setup_logger(name: str, log_file: str = None, level: int = logging.INFO) -> 
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
-    if log_file:
+    if log_file and not any(
+        isinstance(h, logging.FileHandler) and getattr(h, 'baseFilename', None) == os.path.abspath(log_file)
+        for h in logger.handlers
+    ):
         file_handler = logging.FileHandler(log_file)
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
+    if not any(type(h) is logging.StreamHandler for h in logger.handlers):
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger
 

@@ -91,3 +91,7 @@ venv.bak/
 
 # Data
 /data-private
+
+# CLI output of the Quick Start examples
+/data/out
+custom.yaml

@@ -16,14 +16,18 @@ The video file provided in this repository is a cut version of the original dron
 
 ### Commands Used
 
+The commands below write into the git-ignored `data/out/` rather than overwriting the files in this folder directly, so the reference files committed here stay untouched and you can compare your own results against them.
+
 To re-create `video_stab.mp4` and `video_viz.mp4`, run the following command from the root of the repository:
 
 ```sh
-python scripts/stabilize_video.py data/video.mp4 -s -sv
+stabilo video data/video.mp4 -s -sv -o data/out/
 ```
 
 To re-create `video_stab.txt` and `video_track.mp4`, run the following command from the root of the repository:
 
 ```sh
-python scripts/stabilize_boxes.py data/video.mp4 -s -sv
+stabilo tracks data/video.mp4 -s -sv -o data/out/
 ```
+
+Drop the `-o data/out/` flag to overwrite the reference files in place.

@@ -1,8 +1,8 @@
 # Stabilo — Detailed Usage Guide
 
-> **Utility scripts** are also available to demonstrate Stabilo in practice. See the [`scripts/README.md`](../scripts/README.md) for full documentation of `stabilize_video.py`, `stabilize_boxes.py`, and the threshold-analysis tooling.
+> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface) and the [`scripts/README.md`](../scripts/README.md) for the threshold-analysis tooling.
 >
-> **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions.
+> **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions. Learning-based detectors instead run on any torch device via the `device` option.
 
 ---
 
@@ -34,6 +34,8 @@
   - [12. Visualisation Mode](#12-visualisation-mode)
   - [13. Benchmarking Mode](#13-benchmarking-mode)
   - [14. Testing and Development](#14-testing-and-development)
+  - [15. Command-Line Interface](#15-command-line-interface)
+    - [Using an external logger](#using-an-external-logger)
 
 ---
 
@@ -43,8 +45,8 @@ Stabilo aligns a **current frame** to a **reference frame** using a feature-poin
 
 1. **Pre-processing** — optionally apply CLAHE for contrast enhancement and downsample the frame.
 2. **Masking** — build a binary mask from user-supplied exclusion regions so that dynamic objects (e.g., vehicles) are excluded from feature extraction.
-3. **Feature detection and description** — detect and describe keypoints using a chosen detector (ORB, SIFT, rSIFT, BRISK, KAZE, AKAZE).
-4. **Matching** — match descriptors between the current and reference frame using a brute-force (BF) or FLANN matcher.
+3. **Feature detection and description** — detect and describe keypoints using a chosen classical detector (ORB, SIFT, rSIFT, BRISK, KAZE, AKAZE) or learning-based detector (XFeat, DISK, DeDoDe, KeyNet), or match densely with the detector-free LoFTR.
+4. **Matching** — match descriptors between the current and reference frame using a brute-force (BF), FLANN, or learned LightGlue matcher.
 5. **Match filtering** — filter matches by cross-check, Lowe's ratio test, or distance threshold.
 6. **Transformation estimation** — robustly estimate a 3x3 homography (*projective*) or 2x3 affine matrix using a RANSAC-type algorithm (MAGSAC++ by default).
 7. **Stabilisation** — warp the current frame, or transform tracked bounding boxes, into the reference coordinate system.
@@ -59,7 +61,7 @@ This pipeline makes Stabilo suitable for:
 
 ## 2. Installation
 
-It is recommended to create and activate a **Python virtual environment** (Python >= 3.9 and <= 3.13) first:
+It is recommended to create and activate a **Python virtual environment** (Python >= 3.11 and <= 3.13) first:
 
 ```bash
 python3.11 -m venv .venv
@@ -281,8 +283,8 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 
 | Parameter | Default | Valid values | Description |
 |-----------|---------|--------------|-------------|
-| `detector_name` | `'orb'` | `orb`, `sift`, `rsift`, `brisk`, `kaze`, `akaze` | Feature detector |
-| `matcher_name` | `'bf'` | `bf`, `flann` | Feature matcher |
+| `detector_name` | `'orb'` | `orb`, `sift`, `rsift`, `brisk`, `kaze`, `akaze`, `xfeat`, `disk`, `dedode`, `keynet`, `loftr` | Feature detector (see section 9) |
+| `matcher_name` | `'bf'` | `bf`, `flann`, `lightglue` | Feature matcher (see section 10) |
 | `filter_type` | `'ratio'` | `none`, `ratio`, `distance` | Match filtering strategy |
 | `filter_ratio` | `0.9` | `(0, 1]` | Lowe's ratio (for `ratio`) or distance threshold ratio (for `distance`) |
 | `match_query_frame` | `'reference'` | `reference`, `current` | Which frame's descriptors form the `knnMatch` query (matching is asymmetric) |
@@ -304,6 +306,13 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `akaze_threshold` | `0.01` | `> 0` | AKAZE detector threshold (fallback) |
 | `gpu` | `false` | `true`, `false` | Use CUDA GPU acceleration for detection/matching/warping; requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](cuda.md) |
 | `gpu_device_id` | `0` | `>= 0` (int) | CUDA device index to use when `gpu` is true |
+| `device` | `'auto'` | `auto`, `cpu`, `cuda`, `mps` | Torch device for learning-based detectors/matchers only (`auto` picks cuda > mps > cpu) |
+| `loftr_weights` | `'outdoor'` | `outdoor`, `indoor` | LoFTR pretrained weights |
+| `loftr_confidence` | `0.0` | `[0, 1]` | Minimum LoFTR correspondence confidence to keep (`0.0` keeps all) |
+| `disk_weights` | `'depth'` | `depth`, `epipolar` | DISK pretrained weights |
+| `dedode_detector_weights` | `'L-C4-v2'` | `L-upright`, `L-C4`, `L-SO2`, `L-C4-v2` | DeDoDe detector weights |
+| `dedode_descriptor_weights` | `'B-upright'` | `B-upright`, `G-upright`, `B-C4`, `B-SO2`, `G-C4`, `G-SO2` | DeDoDe descriptor weights. The `G` variants pull a 1.2 GB DINOv2 backbone and roughly double the memory for no rotation benefit, so `B` is the default |
+| `logger` | `None` | `logging.Logger` | Optional external logger (constructor-only; not a YAML key) |
 | `viz` | `false` | `true`, `false` | Retain intermediate data for visualisation |
 | `benchmark` | `false` | `true`, `false` | Benchmarking mode (see section 13) |
 | `min_good_match_count_warning` | `20` | `>= 0` | Warn if fewer than N good matches found |
@@ -312,6 +321,8 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 ---
 
 ## 9. Feature Detectors
+
+**Classical detectors** (OpenCV):
 
 | Name | Type | Notes |
 |------|------|-------|
@@ -324,14 +335,58 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 
 For BRISK, KAZE, and AKAZE, Stabilo ships pre-fitted linear regression models that translate `max_features` into the appropriate detector threshold. These models are stored under `stabilo/thresholds/models/` and are selected based on `mask_use` and `clahe` settings. If no model is available the fallback thresholds (`brisk_threshold`, etc.) are used.
 
+**Learning-based detectors** ([kornia](https://kornia.readthedocs.io/), core dependency; pretrained weights download on first use and run on the `device`):
+
+| Name | Type | Rotation invariant | Notes |
+|------|------|:---:|-------|
+| `xfeat` | Float (64-d) | ❌ | Fast learned sparse detector/descriptor, and by far the lightest of the learned models. Works with `bf`/`flann`. |
+| `disk` | Float (128-d) | ❌ | Robust learned sparse features. Works with `bf`/`flann`/`lightglue`. |
+| `dedode` | Float (256-d) | ❌ | Decoupled detect-and-describe; strong but slower. Works with `bf`/`flann`/`lightglue`. Weights via `dedode_detector_weights` / `dedode_descriptor_weights`. |
+| `keynet` | Float (128-d) | ✅ | KeyNet detector + HardNet descriptor, with an OriNet orientation estimator. The only rotation-invariant learned option. Works with `bf`/`flann`/`lightglue`. |
+| `loftr` | Detector-free | ❌ | Semi-dense image-pair matching; produces correspondences directly, so `matcher_name` and `filter_type` are ignored. Weights via `loftr_weights`; filter correspondences with `loftr_confidence`. |
+
+Learning-based detectors receive the same CLAHE, downsampling, and exclusion-mask handling as the classical ones: masks are applied by discarding keypoints (or LoFTR correspondences) that fall in excluded regions, and keypoint coordinates are rescaled back to full resolution after downsampled detection. `max_features` caps the number of detected keypoints. The `brisk_threshold`/`kaze_threshold`/`akaze_threshold` models do not apply. Select the compute device with `device` (`auto` picks cuda > mps > cpu). Note that `gpu=True` (OpenCV CUDA) is incompatible with learning-based detectors; use `device='cuda'` instead.
+
+Pretrained weights are downloaded once, on first use, into torch's hub cache (`~/.cache/torch/hub/checkpoints` on Linux and macOS, `%USERPROFILE%\.cache\torch\hub\checkpoints` on Windows). Set the `TORCH_HOME` environment variable to relocate it. Stabilo logs whether the weights were downloaded or reused from that cache, so a run that stalls on a first-use download is easy to recognise.
+
+### Rotation invariance
+
+`xfeat`, `disk`, `dedode`, and `loftr` are trained on upright imagery and do not estimate a keypoint orientation. Matching against the reference frame degrades as the current frame rotates, and collapses beyond roughly 30°. Measured on a synthetically rotated frame pair, the mean reprojection error of the recovered homography is:
+
+| Detector | 0° | 10° | 30° | 90° |
+|---|---|---|---|---|
+| `orb`, `sift` | 0.0 px | 0.4 px | 0.6 px | 1.2 px |
+| `keynet` | 0.0 px | 0.7 px | 1.3 px | 2.7 px |
+| `xfeat` | 0.0 px | 0.9 px | 1.8 px | fails |
+| `disk` | 0.0 px | 0.4 px | 11.8 px | fails |
+| `dedode` | 0.0 px | 0.5 px | 1.1 px | fails |
+| `loftr` | 0.1 px | 0.5 px | 1.3 px | fails |
+
+For footage with large in-plane rotation, such as a drone orbiting or yawing about its own axis, use a classical detector or `keynet`. Note that DeDoDe's `C4`/`SO2` weight variants are *not* a workaround: they require a steerer to be applied at match time, which kornia does not do.
+
+### Choosing a downsample ratio
+
+The learned models allocate memory in proportion to the *processed* frame size, which is `downsample_ratio²` times the input resolution. They are much hungrier than the classical detectors: at roughly 0.5 MP, `disk`, `dedode`, `keynet`, and `loftr` each peak at several GB of RAM on CPU, while `xfeat` stays a few hundred MB. `loftr` is the extreme case because its coarse matching builds an N×N confidence matrix over N = (H/8)·(W/8) tokens, so its cost grows quadratically: a 4K frame at the default `downsample_ratio: 0.5` yields a 3.9 GB matrix (before intermediates), and at full resolution over 60 GB.
+
+Stabilo emits a warning, but does not cap the resolution, when the processed frame exceeds the guideline below:
+
+| Detector | Guideline (processed frame) | Suggested for a 4K input (3840×2160) |
+|---|---|---|
+| `xfeat` | 2.0 MP | `--downsample-ratio 0.49` |
+| `disk`, `dedode`, `keynet` | 0.5 MP | `--downsample-ratio 0.25` |
+| `loftr` | 0.3 MP | `--downsample-ratio 0.19` |
+
+These are guidelines for a machine with a few GB of free RAM, not hard limits; a large GPU tolerates more. Lower `downsample_ratio` further if the process is killed or the machine begins to swap.
+
 ---
 
 ## 10. Feature Matching and Filtering
 
-Two matchers are supported:
+Three matchers are supported:
 
 - **`bf`** — OpenCV `BFMatcher`. Uses `crossCheck=True` for `filter_type='none'` and `'distance'`; `crossCheck=False` for `filter_type='ratio'`.
 - **`flann`** — OpenCV `FlannBasedMatcher`. Uses LSH index for binary descriptors and KD-Tree for float descriptors.
+- **`lightglue`** — learned [kornia](https://kornia.readthedocs.io/) `LightGlueMatcher`, compatible with the `disk`, `dedode`, and `keynet` detectors only. It performs its own filtering, so `filter_type` is ignored. (The detector-free `loftr` needs no matcher.)
 
 Three filtering strategies:
 
@@ -389,7 +444,7 @@ Set `viz=True` to have Stabilo retain intermediate data on the instance after ea
 | `cur_inliers` | Boolean inlier mask for matched points |
 | `cur_inliers_count` | Number of inlier matches |
 
-These attributes are used by the companion utility scripts (e.g., `stabilize_video.py --viz`) to render side-by-side stabilisation visualisations.
+These attributes are used by the `stabilo video --viz` command to render side-by-side stabilisation visualisations.
 
 Match-quality statistics are also exposed through dedicated getters:
 - `get_cur_inliers_count() -> int | None` — number of inliers (or `None` if estimation failed or has not run yet).
@@ -421,3 +476,50 @@ ruff check .
 # install in editable mode with development dependencies
 pip install -e '.[dev]'
 ```
+
+The learning-based (kornia) detectors have end-to-end tests that download pretrained weights on first run. They are skipped by default; enable them with:
+
+```bash
+STABILO_DL_TESTS=1 pytest tests/test_dl.py
+```
+
+---
+
+## 15. Command-Line Interface
+
+Installing stabilo provides a `stabilo` console command:
+
+```bash
+stabilo video <input> [options]    # stabilize a video relative to a reference frame
+stabilo tracks <input> [options]   # stabilize per-frame object annotations (tracks)
+stabilo config show                # print the default configuration
+stabilo config copy [--output PATH]  # write an editable copy (default: ./custom.yaml)
+```
+
+Run `stabilo video --help` or `stabilo tracks --help` for the full list of options; both expose every stabilo parameter (detector, matcher, RANSAC, masking, device, etc.).
+
+To customize parameters, run `stabilo config copy`, edit the generated `custom.yaml`, and pass it with `--custom-config custom.yaml`:
+
+```bash
+stabilo config copy
+# edit custom.yaml ...
+stabilo video data/video.mp4 --save --output data/out/ --custom-config custom.yaml
+```
+
+Resolution order is **explicit CLI flags > custom config file > built-in defaults**: a key set in the file passed to `--custom-config` fills in anything not explicitly passed as a CLI flag, and both override `stabilo/cfg/default.yaml`.
+
+Each CLI invocation performs a best-effort check for a newer stabilo release on PyPI and prints a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
+
+### Using an external logger
+
+`Stabilizer` accepts an optional `logger` so an embedding application can route stabilo's log records through its own logging setup:
+
+```python
+import logging
+from stabilo import Stabilizer
+
+my_logger = logging.getLogger("my_app.stabilo")
+stabilizer = Stabilizer(logger=my_logger)
+```
+
+If omitted, stabilo uses its own module logger.
