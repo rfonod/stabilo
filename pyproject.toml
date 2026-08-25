@@ -29,15 +29,20 @@ name = "stabilo"
 dynamic = ["version"]
 description = "Stabilizes video or extracted trajectories with respect to a selected reference frame in the video, with optional user-provided masks."
 authors = [
-    { name = "Robert Fonod", email = "robert.fonod@ieee.org" },
+    { name = "Robert Fonod" },
+    { email = "robert.fonod@ieee.org" },
+]
+maintainers = [
+    { name = "Robert Fonod" },
+    { email = "robert.fonod@ieee.org" },
 ]
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
+license = { text = "MIT" }
 requires-python = ">=3.11"
 keywords = ["stabilo", "video-stabilization", "object-stabilization", "mask", "reference-frame", "computer-vision"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
