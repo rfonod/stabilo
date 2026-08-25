@@ -53,6 +53,122 @@ def test_invalid_ransac_method():
         Stabilizer(ransac_method=999)
 
 
+def test_ransac_method_names_cover_every_valid_method():
+    """The CLI help and the affine error message are built from RANSAC_METHOD_NAMES; keep it in sync."""
+    assert set(Stabilizer.RANSAC_METHOD_NAMES) == set(Stabilizer.VALID_RANSAC_METHODS_DICT.values())
+    assert Stabilizer.VALID_AFFINE_RANSAC_METHODS <= set(Stabilizer.RANSAC_METHOD_NAMES)
+
+
+_PROJECTIVE_ONLY_RANSAC_METHODS = sorted(
+    set(Stabilizer.VALID_RANSAC_METHODS_DICT.values()) - Stabilizer.VALID_AFFINE_RANSAC_METHODS
+)
+
+
+def test_affine_rejects_default_ransac_method():
+    with pytest.raises(ValueError, match='affine'):
+        Stabilizer(transformation_type='affine')
+
+
+@pytest.mark.parametrize('ransac_method', _PROJECTIVE_ONLY_RANSAC_METHODS)
+def test_affine_rejects_projective_only_ransac_methods(ransac_method):
+    with pytest.raises(ValueError, match='affine'):
+        Stabilizer(transformation_type='affine', ransac_method=ransac_method)
+
+
+@pytest.mark.parametrize('ransac_method', sorted(Stabilizer.VALID_AFFINE_RANSAC_METHODS))
+def test_affine_accepts_supported_ransac_methods(ransac_method):
+    stab = Stabilizer(transformation_type='affine', ransac_method=ransac_method)
+    assert stab.transformer is cv2.estimateAffinePartial2D
+
+
+@pytest.mark.parametrize('ransac_method', sorted(Stabilizer.VALID_RANSAC_METHODS_DICT.values()))
+def test_projective_accepts_every_ransac_method(ransac_method):
+    stab = Stabilizer(transformation_type='projective', ransac_method=ransac_method)
+    assert stab.transformer is cv2.findHomography
+
+
+@pytest.mark.parametrize('ransac_method', sorted(Stabilizer.VALID_RANSAC_METHODS_DICT.values()))
+def test_affine_ransac_support_matches_opencv(ransac_method):
+    """VALID_AFFINE_RANSAC_METHODS must track what cv2.estimateAffinePartial2D actually implements."""
+    rng = np.random.default_rng(0)
+    src = rng.uniform(0, 500, (60, 1, 2)).astype(np.float32)
+    dst = cv2.transform(src, np.array([[0.98, -0.17, 12.0], [0.17, 0.98, -8.0]], dtype=np.float32))
+    expected = ransac_method in Stabilizer.VALID_AFFINE_RANSAC_METHODS
+    try:
+        matrix, _ = cv2.estimateAffinePartial2D(
+            src, dst, method=ransac_method, maxIters=2000, confidence=0.999, ransacReprojThreshold=2.0
+        )
+    except cv2.error:
+        assert not expected, f'cv2.estimateAffinePartial2D now rejects ransac_method={ransac_method}'
+    else:
+        assert expected, f'cv2.estimateAffinePartial2D now supports ransac_method={ransac_method}'
+        assert matrix is not None
+
+
+@pytest.mark.parametrize(
+    ('transformation_type', 'ransac_method', 'expected_shape'),
+    [('projective', 38, (3, 3)), ('affine', 8, (2, 3))],
+)
+def test_benchmark_identity_fallback_matches_transformation_shape(
+    images, transformation_type, ransac_method, expected_shape
+):
+    """The benchmark fallback must be a 2x3 identity for affine, or warping/box transform crashes."""
+    _, ref_frame = images
+    featureless = np.zeros_like(ref_frame)
+    boxes = np.array([[100.0, 150.0, 60.0, 40.0]])
+    stab = Stabilizer(
+        transformation_type=transformation_type,
+        ransac_method=ransac_method,
+        benchmark=True,
+        downsample_ratio=1.0,
+    )
+    stab.set_ref_frame(ref_frame, boxes)
+    stab.stabilize(featureless, boxes)
+
+    matrix = stab.get_cur_trans_matrix()
+    assert matrix is not None
+    assert matrix.shape == expected_shape
+    np.testing.assert_allclose(matrix, np.eye(*expected_shape))
+    assert stab.warp_cur_frame().shape == ref_frame.shape
+    assert stab.transform_cur_boxes().shape == boxes.shape
+
+
+def test_benchmark_identity_fallback_is_a_fresh_array(images):
+    """Each fallback must be its own array; callers normalize matrices in place."""
+    _, ref_frame = images
+    featureless = np.zeros_like(ref_frame)
+    stab = Stabilizer(benchmark=True, mask_use=False, downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+
+    collected = []
+    for _ in range(3):
+        stab.stabilize(featureless)
+        collected.append(stab.get_cur_trans_matrix())
+
+    assert all(m is not stab.identity_matrix for m in collected)
+    assert collected[0] is not collected[1] is not collected[2]
+    collected[0][0, 0] = 99.0
+    np.testing.assert_allclose(stab.identity_matrix, np.eye(3))
+    np.testing.assert_allclose(collected[1], np.eye(3))
+
+
+@pytest.mark.parametrize('ransac_method', sorted(Stabilizer.VALID_AFFINE_RANSAC_METHODS))
+def test_affine_stabilization_end_to_end(images, ransac_method):
+    cur_frame, ref_frame = images
+    boxes = np.array([[100.0, 150.0, 60.0, 40.0]])
+    stab = Stabilizer(transformation_type='affine', ransac_method=ransac_method, downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame, boxes)
+    stab.stabilize(cur_frame, boxes)
+
+    matrix = stab.get_cur_trans_matrix()
+    assert matrix is not None
+    assert matrix.shape == (2, 3)
+    inliers_count = stab.get_cur_inliers_count()
+    assert inliers_count is not None and inliers_count > 0
+    assert stab.warp_cur_frame().shape == ref_frame.shape
+    assert stab.transform_cur_boxes().shape == boxes.shape
+
+
 def test_invalid_downsample_ratio():
     with pytest.raises(ValueError):
         Stabilizer(downsample_ratio=1.5)

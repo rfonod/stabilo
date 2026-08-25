@@ -35,6 +35,13 @@ def test_subcommand_help_exits_zero(capsys, sub):
     assert exc.value.code == 0
 
 
+def test_invalid_ransac_method_is_an_argparse_error(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(['video', 'input.mp4', '--save', '--ransac-method', '999'])
+    assert exc.value.code == 2
+    assert 'invalid choice' in capsys.readouterr().err
+
+
 def test_config_show(capsys, monkeypatch):
     monkeypatch.setenv('STABILO_DISABLE_UPDATE_CHECK', '1')
     main(['config', 'show'])
