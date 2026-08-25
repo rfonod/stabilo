@@ -101,11 +101,11 @@ def stabilize_video(args, kwargs, logger):
     Stabilize a video using the stabilo library.
     """
     reader, frame_count, w, h, fps = initialize_read_streams(args, logger)
-    writer_vid, writer_viz = initialize_write_streams(args, w, h, fps, logger)
     masks = load_exclusion_masks(args, logger)
 
     stabilizer = Stabilizer(**kwargs)
 
+    writer_vid, writer_viz = initialize_write_streams(args, w, h, fps, logger)
     pbar = initialize_progress_bar(args, frame_count)
 
     frame_num = 0

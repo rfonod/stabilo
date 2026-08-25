@@ -98,7 +98,12 @@ def add_stabilo_config_arguments(parser):
     )
     group.add_argument("--filter-ratio", "-fr", type=float, help="filter ratio for the match filter [default: 0.9]")
 
-    group = parser.add_argument_group("stabilo: transformation estimation")
+    affine_methods = ", ".join(Stabilizer.describe_ransac_methods(Stabilizer.VALID_AFFINE_RANSAC_METHODS))
+    group = parser.add_argument_group(
+        "stabilo: transformation estimation",
+        "'projective' works with every --ransac-method; 'affine' (cv2.estimateAffinePartial2D) accepts only "
+        f"{affine_methods} and is rejected with any other method.",
+    )
     group.add_argument(
         "--transformation-type",
         "-tt",
@@ -106,7 +111,16 @@ def add_stabilo_config_arguments(parser):
         choices=Stabilizer.VALID_TRANSFORMATION_TYPES,
         help="transformation type [default: projective]",
     )
-    group.add_argument("--ransac-method", "-r", type=int, help="RANSAC method [default: 38 (MAGSAC++)]")
+    group.add_argument(
+        "--ransac-method",
+        "-r",
+        type=int,
+        choices=sorted(Stabilizer.RANSAC_METHOD_NAMES),
+        metavar="METHOD",
+        help="RANSAC method: "
+        + ", ".join(f"{method} {name}" for method, name in sorted(Stabilizer.RANSAC_METHOD_NAMES.items()))
+        + " [default: 38 (MAGSAC++)]",
+    )
     group.add_argument(
         "--ransac-epipolar-threshold", "-ret", type=float, help="RANSAC epipolar threshold [default: 2.0]"
     )
