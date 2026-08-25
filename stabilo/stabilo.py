@@ -89,16 +89,36 @@ class Stabilizer:
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
     VALID_MATCH_QUERY_FRAMES = ['reference', 'current']
     VALID_RANSAC_METHODS_DICT = {
-        'cv2.LMEDS': cv2.LMEDS,  # 4 - LMEDS
-        'cv2.RANSAC': cv2.RANSAC,  # 8 - RANSAC
-        'cv2.RHO': cv2.RHO,  # 16 - RHO
-        'cv2.USAC_DEFAULT': cv2.USAC_DEFAULT,  # 32 - DEGENSAC
-        'cv2.USAC_PARALLEL': cv2.USAC_PARALLEL,  # 33 - DEGENSAC (with different parameters)
-        'cv2.USAC_FAST': cv2.USAC_FAST,  # 35 - LO-RANSAC
-        'cv2.USAC_ACCURATE': cv2.USAC_ACCURATE,  # 36 - GC-RANSAC
-        'cv2.USAC_PROSAC': cv2.USAC_PROSAC,  # 37 - PROSAC
-        'cv2.USAC_MAGSAC': cv2.USAC_MAGSAC,  # 38 - MAGSAC++
+        'cv2.LMEDS': cv2.LMEDS,  # 4
+        'cv2.RANSAC': cv2.RANSAC,  # 8
+        'cv2.RHO': cv2.RHO,  # 16
+        'cv2.USAC_DEFAULT': cv2.USAC_DEFAULT,  # 32
+        'cv2.USAC_PARALLEL': cv2.USAC_PARALLEL,  # 33
+        'cv2.USAC_FAST': cv2.USAC_FAST,  # 35
+        'cv2.USAC_ACCURATE': cv2.USAC_ACCURATE,  # 36
+        'cv2.USAC_PROSAC': cv2.USAC_PROSAC,  # 37
+        'cv2.USAC_MAGSAC': cv2.USAC_MAGSAC,  # 38
     }
+    RANSAC_METHOD_NAMES = {
+        cv2.LMEDS: 'LMEDS',
+        cv2.RANSAC: 'RANSAC',
+        cv2.RHO: 'RHO',
+        cv2.USAC_DEFAULT: 'USAC-Default (LO-RANSAC)',
+        cv2.USAC_PARALLEL: 'USAC-Parallel (LO-RANSAC)',
+        cv2.USAC_FAST: 'USAC-Fast (LO-RANSAC)',
+        cv2.USAC_ACCURATE: 'USAC-Accurate (GC-RANSAC)',
+        cv2.USAC_PROSAC: 'PROSAC',
+        cv2.USAC_MAGSAC: 'MAGSAC++',
+    }
+    VALID_AFFINE_RANSAC_METHODS = {cv2.LMEDS, cv2.RANSAC}
+
+    @classmethod
+    def describe_ransac_methods(cls, methods=None) -> list:
+        """
+        Render RANSAC methods as 'code (Name)' strings, sorted by code.
+        """
+        methods = cls.RANSAC_METHOD_NAMES if methods is None else methods
+        return [f"{method} ({cls.RANSAC_METHOD_NAMES[method]})" for method in sorted(methods)]
 
     def __init__(self, **kwargs):
         """
@@ -118,7 +138,8 @@ class Stabilizer:
         - mask_use: bool - use mask for feature detection
         - filter_ratio: float - filtering ratio; Lowe's ratio for 'ratio' filter, distance threshold ratio for 'distance' filter
         - match_query_frame: str - which descriptors are the knnMatch query: 'reference' (default) or 'current'
-        - ransac_method: int - method for RANSAC algorithm (see above for options)
+        - ransac_method: int - method for RANSAC algorithm (see above for options); with
+          transformation_type='affine' only cv2.LMEDS (4) and cv2.RANSAC (8) are supported
         - ransac_epipolar_threshold: float - threshold for RANSAC (e.g., 1.0)
         - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
         - ransac_confidence: float - confidence for RANSAC (e.g., 0.999)
@@ -182,6 +203,7 @@ class Stabilizer:
         self.cur_trans_matrix, self.trans_matrix_last_known = None, None
         self.cur_inliers, self.cur_inliers_count = None, None
         self.h, self.w = None, None
+        self.identity_matrix = None
         self.gpu_stream = None
         self._gpu_frame_buf, self._gpu_mask_buf = None, None
         self._gpu_cur_desc_buf, self._gpu_warp_buf = None, None
@@ -376,9 +398,11 @@ class Stabilizer:
         if self.transformation_type == 'projective':
             self.transformer = cv2.findHomography
             self.warper = cv2.cuda.warpPerspective if self.gpu else cv2.warpPerspective
+            self.identity_matrix = np.eye(3)
         elif self.transformation_type == 'affine':
             self.transformer = cv2.estimateAffinePartial2D
             self.warper = cv2.cuda.warpAffine if self.gpu else cv2.warpAffine
+            self.identity_matrix = np.eye(2, 3)
 
     def _create_helpers(self):
         """
@@ -753,7 +777,7 @@ class Stabilizer:
                 )
             except cv2.error as e:
                 self.logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
-                self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
+                self.cur_trans_matrix = self.identity_matrix.copy() if self.benchmark else self.trans_matrix_last_known
                 inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
                 inliers_count = None
                 if not self.benchmark:
@@ -768,14 +792,16 @@ class Stabilizer:
                         )
                 else:
                     self.logger.warning('Transformation matrix is None.')
-                    self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
+                    self.cur_trans_matrix = (
+                        self.identity_matrix.copy() if self.benchmark else self.trans_matrix_last_known
+                    )
                     inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
                     inliers_count = None
                     if not self.benchmark:
                         self.logger.warning("Re-using the last known transformation matrix.")
         else:
             self.logger.warning('Not enough points to estimate the transformation matrix.')
-            self.cur_trans_matrix = np.eye(3) if self.benchmark else self.trans_matrix_last_known
+            self.cur_trans_matrix = self.identity_matrix.copy() if self.benchmark else self.trans_matrix_last_known
             if not self.benchmark:
                 self.logger.warning("Re-using the last known transformation matrix.")
             inliers = np.full((len(self.cur_pts), 1), False, dtype=bool)
@@ -1139,7 +1165,14 @@ class Stabilizer:
             )
         if self.ransac_method not in self.VALID_RANSAC_METHODS_DICT.values():
             raise ValueError(
-                f"Invalid RANSAC method: {self.ransac_method}. Choose from {self.VALID_RANSAC_METHODS_DICT.keys()}"
+                f"Invalid RANSAC method: {self.ransac_method}. Choose from {self.describe_ransac_methods()}"
+            )
+        if self.transformation_type == 'affine' and self.ransac_method not in self.VALID_AFFINE_RANSAC_METHODS:
+            supported = self.describe_ransac_methods(self.VALID_AFFINE_RANSAC_METHODS)
+            raise ValueError(
+                "transformation_type='affine' (cv2.estimateAffinePartial2D) does not support "
+                f"ransac_method={self.ransac_method}. Choose from {supported}, or switch to "
+                "transformation_type='projective', which supports every method."
             )
         if not (0.0 < self.downsample_ratio <= 1.0):
             raise ValueError("Invalid downsample_ratio. It should be in the range (0.0, 1.0]")

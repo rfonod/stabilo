@@ -114,7 +114,6 @@ def stabilize_tracks(args, kwargs, logger):
     Stabilize per-frame object annotations (tracks) using the stabilo library.
     """
     reader, frame_count, w, h, fps = initialize_read_streams(args, logger)
-    writer = initialize_track_write_stream(args, w, h, fps, logger)
     tracks = load_tracks(args, logger)
     boxes = get_boxes_from_tracks(tracks, args, logger)
     boxes_box_format = ENCODING_TO_BOX_FORMAT[args.boxes_enc]
@@ -129,6 +128,7 @@ def stabilize_tracks(args, kwargs, logger):
 
     stabilizer = Stabilizer(**kwargs)
 
+    writer = initialize_track_write_stream(args, w, h, fps, logger)
     pbar = initialize_progress_bar(args, frame_count)
 
     ref_frame_number = args.ref_frame

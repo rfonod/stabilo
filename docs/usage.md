@@ -31,9 +31,12 @@
   - [11. Transformation Types and RANSAC Methods](#11-transformation-types-and-ransac-methods)
     - [Transformation types](#transformation-types)
     - [RANSAC methods (integer codes)](#ransac-methods-integer-codes)
+    - [Method and transformation compatibility](#method-and-transformation-compatibility)
   - [12. Visualisation Mode](#12-visualisation-mode)
   - [13. Benchmarking Mode](#13-benchmarking-mode)
   - [14. Testing and Development](#14-testing-and-development)
+    - [Tests that are skipped by default](#tests-that-are-skipped-by-default)
+    - [Core-dependency smoke test](#core-dependency-smoke-test)
   - [15. Command-Line Interface](#15-command-line-interface)
     - [Using an external logger](#using-an-external-logger)
 
@@ -297,7 +300,7 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `rsift_eps` | `1e-8` | `> 0` | RootSIFT (`rsift`) L1-normalization epsilon |
 | `mask_use` | `true` | `true`, `false` | Enable exclusion masking |
 | `mask_margin_ratio` | `0.15` | `[0, 1]` | Fractional margin added to exclusion regions |
-| `ransac_method` | `38` | see section 11 | RANSAC algorithm |
+| `ransac_method` | `38` | see section 11 | RANSAC algorithm (`affine` supports only `4` and `8`) |
 | `ransac_epipolar_threshold` | `2.0` | `> 0` | Reprojection-error threshold (pixels) |
 | `ransac_max_iter` | `5000` | `> 0` (int) | Maximum RANSAC iterations |
 | `ransac_confidence` | `0.999999` | `(0, 1]` | Required confidence level |
@@ -407,23 +410,34 @@ Three filtering strategies:
 | `transformation_type` | Matrix shape | Function |
 |-----------------------|-------------|----------|
 | `projective` | 3 x 3 | `cv2.findHomography` |
-| `affine` | 2 x 3 | `cv2.estimateAffinePartial2D` |
+| `affine` | 2 x 3 | `cv2.estimateAffinePartial2D` (4-DOF similarity) |
 
-Use `projective` (default) when the camera undergoes any motion (pan, tilt, zoom, rotation). Use `affine` when you need to restrict to similarity/affine motions.
+Use `projective` (default) when the camera undergoes any motion (pan, tilt, zoom, rotation). Use `affine` to restrict the estimate to a 4-DOF **similarity** transform: rotation, uniform scale, and translation. Despite the name, `cv2.estimateAffinePartial2D` does not estimate shear or non-uniform scale; a general 6-DOF affine would need `cv2.estimateAffine2D`, which stabilo does not wire up.
 
 ### RANSAC methods (integer codes)
 
-| Code | Method |
-|------|--------|
-| 4 | LMEDS |
-| 8 | RANSAC |
-| 16 | RHO |
-| 32 | DEGENSAC (`cv2.USAC_DEFAULT`) |
-| 33 | DEGENSAC variant (`cv2.USAC_PARALLEL`) |
-| 35 | LO-RANSAC (`cv2.USAC_FAST`) |
-| 36 | GC-RANSAC (`cv2.USAC_ACCURATE`) |
-| 37 | PROSAC (`cv2.USAC_PROSAC`) |
-| **38** | **MAGSAC++ (`cv2.USAC_MAGSAC`) — default** |
+| Code | Method | `projective` | `affine` |
+|------|--------|:------------:|:--------:|
+| 4 | LMEDS (`cv2.LMEDS`) | yes | yes |
+| 8 | RANSAC (`cv2.RANSAC`) | yes | yes |
+| 16 | RHO (`cv2.RHO`) | yes | no |
+| 32 | USAC-Default, LO-RANSAC (`cv2.USAC_DEFAULT`) | yes | no |
+| 33 | USAC-Parallel, LO-RANSAC run in parallel (`cv2.USAC_PARALLEL`) | yes | no |
+| 35 | USAC-Fast, LO-RANSAC with fewer local-optimization iterations (`cv2.USAC_FAST`) | yes | no |
+| 36 | USAC-Accurate, GC-RANSAC (`cv2.USAC_ACCURATE`) | yes | no |
+| 37 | PROSAC (`cv2.USAC_PROSAC`) | yes | no |
+| **38** | **MAGSAC++ (`cv2.USAC_MAGSAC`), default** | yes | no |
+
+Codes 32, 33, and 35 are three LO-RANSAC configurations that differ in how local optimization is scheduled, per OpenCV's [USAC tutorial](https://docs.opencv.org/4.x/de/d3f/tutorial_usac.html). None of them is DEGENSAC: that is a degeneracy check used for fundamental-matrix estimation, which OpenCV does not apply to homographies.
+
+### Method and transformation compatibility
+
+`affine` maps to `cv2.estimateAffinePartial2D`, which implements only LMEDS and RANSAC; every other code raises inside OpenCV. Stabilo rejects the combination when the `Stabilizer` is constructed, rather than failing on every frame:
+
+```python
+Stabilizer(transformation_type='affine')                    # ValueError: the default ransac_method 38 is projective-only
+Stabilizer(transformation_type='affine', ransac_method=8)   # OK
+```
 
 ---
 
@@ -477,11 +491,36 @@ ruff check .
 pip install -e '.[dev]'
 ```
 
-The learning-based (kornia) detectors have end-to-end tests that download pretrained weights on first run. They are skipped by default; enable them with:
+Run `pytest` from the repository root: the fixtures load images through relative paths such as `tests/ND_before.jpg`, so the suite fails from anywhere else.
+
+### Tests that are skipped by default
+
+Three groups of tests stay skipped unless their prerequisites are met:
+
+| Group | Runs when | Why it is gated |
+|-------|-----------|-----------------|
+| Learning-based end-to-end tests (`tests/test_dl.py`) | `kornia` is importable **and** `STABILO_DL_TESTS=1` is set | Each detector downloads pretrained weights on first run (hundreds of MB into torch's hub cache) and needs far more time and memory than the classical path. Gating them keeps a plain `pytest` offline, fast, and safe to run in CI. |
+| CUDA tests (`tests/test_stabilizer.py`) | OpenCV reports a CUDA-enabled device | Stock `opencv-python` wheels ship no CUDA algorithms, see [`docs/cuda.md`](cuda.md). |
+| Codec-dependent CLI tests (`tests/test_cli.py`) | The OpenCV build can actually encode a video file | The end-to-end render tests skip themselves when no `VideoWriter` codec is available, or when the writer produces no file, which happens on minimal or headless OpenCV builds. |
+
+The learning-based gate is an explicit environment variable rather than an "enable if kornia is installed" check because `kornia` and `torch` became core dependencies in v1.4.0: they are always present, so an importability check would download weights for everyone running the suite. Opt in with:
 
 ```bash
 STABILO_DL_TESTS=1 pytest tests/test_dl.py
 ```
+
+Once the weights are cached, later runs work offline. The validation-only tests in `tests/test_dl.py` (invalid device, incompatible matcher, and so on) always run, because argument validation raises before kornia is ever imported.
+
+### Core-dependency smoke test
+
+`.github/scripts/smoke_core.py` synthesizes a small video plus a matching bounding-box file and drives both `stabilo video` and `stabilo tracks` over them. It needs no development dependency, so it can validate an install made with a plain `pip install .`:
+
+```bash
+pip install .
+python .github/scripts/smoke_core.py --core-only
+```
+
+`--core-only` additionally asserts that the `extras` dependency (matplotlib) is absent. CI runs this as the `core-install` job on every push and pull request.
 
 ---
 

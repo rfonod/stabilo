@@ -104,12 +104,12 @@ Three matchers are available: `bf` (brute force) and `flann` work with every det
 <details>
 <summary><b>📋 Full Feature Overview</b></summary>
 
-- **Video stabilization**: warp every frame onto a chosen anchor frame (`stabilo video ... -rf 100`) with a projective or affine model (`--transformation-type affine`). See [Library Usage](#library-usage).
+- **Video stabilization**: warp every frame onto a chosen anchor frame (`stabilo video ... -rf 100`) with a projective or affine model (`--transformation-type affine --ransac-method 8`). See [Library Usage](#library-usage).
 - **Trajectory stabilization**: transform per-frame detections or tracks into the reference coordinate system (`stabilo tracks ... --boxes-enc xywha`), reading and writing `yolo`, `pascal`, `coco`, `xywha`, or `four` encodings.
 - **Exclusion masks**: suppress keypoints on dynamic objects, in five geometries fed by seven input encodings (`--mask-enc yolo|pascal|coco|xywha|four|polygon|circle`), with an adjustable safety margin (`--mask-margin-ratio 0.15`). Disable with `--no-mask`. See [Masking behaviour](docs/usage.md#5-masking-behaviour).
 - **Classical detectors**: ORB, SIFT, RootSIFT, BRISK, KAZE, AKAZE (`--detector-name rsift`), with BF or FLANN matching (`--matcher-name flann`) and cross-check, Lowe's ratio, or distance filtering (`--filter-type ratio`).
 - **Learning-based detectors**: XFeat, DISK, DeDoDe, KeyNet, and the detector-free LoFTR via [kornia](https://kornia.readthedocs.io/) (`--detector-name disk`), optionally paired with the learned LightGlue matcher (`--matcher-name lightglue`). Pretrained weights download once into torch's cache and are reused offline. Mind the rotation and memory caveats above; pair them with a lower `--downsample-ratio`.
-- **Robust estimation**: MAGSAC++ by default, plus DEGENSAC, GC-RANSAC, LO-RANSAC, PROSAC, RHO, LMEDS, RANSAC (`--ransac-method 36`), with tunable threshold, iterations, and confidence (`--ransac-epipolar-threshold 1.5`). See [RANSAC methods](docs/usage.md#11-transformation-types-and-ransac-methods).
+- **Robust estimation**: MAGSAC++ by default, plus GC-RANSAC, three LO-RANSAC (USAC) variants, PROSAC, RHO, LMEDS, RANSAC (`--ransac-method 36`), with tunable threshold, iterations, and confidence (`--ransac-epipolar-threshold 1.5`). See [RANSAC methods](docs/usage.md#11-transformation-types-and-ransac-methods).
 - **Pre-processing**: CLAHE contrast enhancement (`--clahe`) and detection-time downsampling for speed (`--downsample-ratio 0.25`), with keypoints rescaled back to full resolution.
 - **Acceleration**: OpenCV CUDA for the classical pipeline (`--gpu`, see [`docs/cuda.md`](docs/cuda.md)) and CUDA/MPS/CPU for the learned models (`--device mps`).
 - **Visualization**: live or recorded side-by-side rendering of matches, inliers, masks, and box trajectories (`--viz`, `--save-viz`, `--no-lines`, `--tail-length 60`). See [Visualisation mode](docs/usage.md#12-visualisation-mode).
@@ -272,11 +272,11 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = jul,
+      month = aug,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.4.0},
+      version = {1.4.1},
       year = {2026}
     }
     ```
