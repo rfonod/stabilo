@@ -60,8 +60,13 @@ match_query_frame: 'reference'  # Which frame's descriptors are the knnMatch que
 # -----------------------------------------------------------------------------
 # The estimated matrix maps the current frame onto the reference frame, so the
 # RANSAC reprojection threshold is expressed in reference-frame pixels.
-transformation_type: 'projective'  # ['projective' (3x3 homography), 'affine' (2x3)]
-ransac_method: 38  # [4: LMEDS, 8: RANSAC, 16: RHO, 32: DEGENSAC, 33: DEGENSAC (alt. params), 35: LO-RANSAC, 36: GC-RANSAC, 37: PROSAC, 38: MAGSAC++]
+#
+# Not every ransac_method works with every transformation_type. 'projective'
+# (cv2.findHomography) accepts all of them, whereas 'affine'
+# (cv2.estimateAffinePartial2D) accepts ONLY 4 (LMEDS) and 8 (RANSAC); any other
+# code, including the default 38, is rejected when the Stabilizer is created.
+transformation_type: 'projective'  # ['projective' (3x3 homography, any ransac_method), 'affine' (2x3, ransac_method 4 or 8 only)]
+ransac_method: 38  # [4: LMEDS, 8: RANSAC, 16: RHO, 32: USAC-Default (LO-RANSAC), 33: USAC-Parallel (LO-RANSAC), 35: USAC-Fast (LO-RANSAC), 36: USAC-Accurate (GC-RANSAC), 37: PROSAC, 38: MAGSAC++]
 ransac_epipolar_threshold: 2.0  # Reprojection-error threshold in pixels; (0.0, inf)
 ransac_max_iter: 5000  # Max. RANSAC iterations; (0, inf)
 ransac_confidence: 0.999999  # Required RANSAC confidence level; (0.0, 1.0]
