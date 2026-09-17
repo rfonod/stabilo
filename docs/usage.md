@@ -31,6 +31,7 @@
   - [11. Transformation Types and RANSAC Methods](#11-transformation-types-and-ransac-methods)
     - [Transformation types](#transformation-types)
     - [RANSAC methods (integer codes)](#ransac-methods-integer-codes)
+    - [The epipolar threshold and the downsample ratio](#the-epipolar-threshold-and-the-downsample-ratio)
     - [Method and transformation compatibility](#method-and-transformation-compatibility)
   - [12. Visualisation Mode](#12-visualisation-mode)
   - [13. Benchmarking Mode](#13-benchmarking-mode)
@@ -284,6 +285,8 @@ ref_point = ref_point_h[:2] / ref_point_h[2]   # divide by homogeneous coordinat
 
 All parameters can be passed as keyword arguments to `Stabilizer(...)` or set via a YAML file (see `stabilo/cfg/default.yaml`). Parameters not supplied fall back to their defaults.
 
+`stabilo/cfg/default.yaml` is the complete list. A keyword argument whose name is not one of its keys is ignored, so the parameter it was meant to set keeps its default; stabilo logs a warning naming the unrecognized arguments and, where there is one, the nearest valid name. `Stabilizer.configurable_keys()` returns the valid names, for a caller that wants to check or filter a configuration itself.
+
 | Parameter | Default | Valid values | Description |
 |-----------|---------|--------------|-------------|
 | `detector_name` | `'orb'` | `orb`, `sift`, `rsift`, `brisk`, `kaze`, `akaze`, `xfeat`, `disk`, `dedode`, `keynet`, `loftr` | Feature detector (see section 9) |
@@ -301,7 +304,8 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `mask_use` | `true` | `true`, `false` | Enable exclusion masking |
 | `mask_margin_ratio` | `0.15` | `[0, 1]` | Fractional margin added to exclusion regions |
 | `ransac_method` | `38` | see section 11 | RANSAC algorithm (`affine` supports only `4` and `8`) |
-| `ransac_epipolar_threshold` | `2.0` | `> 0` | Reprojection-error threshold (pixels) |
+| `ransac_epipolar_threshold` | `2.0` | `> 0` | Reprojection-error threshold, in pixels of `ransac_threshold_space` |
+| `ransac_threshold_space` | `'full'` | `full`, `processed` | Pixels the threshold is measured in: full-resolution, or the downsampled image (see section 11) |
 | `ransac_max_iter` | `5000` | `> 0` (int) | Maximum RANSAC iterations |
 | `ransac_confidence` | `0.999999` | `(0, 1]` | Required confidence level |
 | `brisk_threshold` | `130` | `(0, 255]` | BRISK detector threshold (fallback) |
@@ -429,6 +433,19 @@ Use `projective` (default) when the camera undergoes any motion (pan, tilt, zoom
 | **38** | **MAGSAC++ (`cv2.USAC_MAGSAC`), default** | yes | no |
 
 Codes 32, 33, and 35 are three LO-RANSAC configurations that differ in how local optimization is scheduled, per OpenCV's [USAC tutorial](https://docs.opencv.org/4.x/de/d3f/tutorial_usac.html). None of them is DEGENSAC: that is a degeneracy check used for fundamental-matrix estimation, which OpenCV does not apply to homographies.
+
+### The epipolar threshold and the downsample ratio
+
+Keypoints detected on a downsampled frame are rescaled to full resolution before the estimator sees them, so `ransac_epipolar_threshold` is a **full-resolution** pixel distance by default (`ransac_threshold_space: 'full'`). The keypoint localization error it has to separate from real outliers is not: that arises in the processed image and is magnified by `1 / downsample_ratio` when the points are rescaled. A fixed threshold is therefore a stricter filter at a low ratio than at a high one, by exactly the ratio between them, and a value tuned at one `downsample_ratio` does not transfer to another.
+
+Set `ransac_threshold_space: 'processed'` to express the threshold in processed-image pixels instead, which keeps it fixed in the units the noise is generated in; stabilo then passes `ransac_epipolar_threshold / downsample_ratio` to the estimator.
+
+```python
+Stabilizer(downsample_ratio=0.25, ransac_epipolar_threshold=2.0)                                  # 2.0 px at full resolution
+Stabilizer(downsample_ratio=0.25, ransac_epipolar_threshold=2.0, ransac_threshold_space='processed')  # 8.0 px at full resolution
+```
+
+Neither setting is right in general: the residuals a threshold must separate are part localization noise (which scales with `1 / downsample_ratio`) and part model error (which does not). Which to use, and at what value, is a tuning question; `get_ransac_reproj_threshold()` reports the value that is actually handed to the estimator.
 
 ### Method and transformation compatibility
 
