@@ -37,6 +37,11 @@ Caveats:
     Use a classical detector or KeyNet for footage with large in-plane rotation.
   - The learning-based detectors are memory hungry at high resolution. Reduce downsample_ratio for
     large inputs; LoFTR in particular scales quadratically with the pixel count.
+  - ransac_epipolar_threshold does not transfer across values of downsample_ratio. Keypoints are
+    rescaled to full resolution before estimation, so the threshold is a full-resolution distance
+    by default, while the localization error it separates arises in the processed image and is
+    magnified by 1 / downsample_ratio. Re-tune the threshold when the ratio changes, or set
+    ransac_threshold_space='processed' to express it in processed-image pixels instead.
 
 Usage:
 1. Create an instance of the 'Stabilizer' class with desired parameter configurations.
@@ -88,6 +93,7 @@ class Stabilizer:
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
     VALID_MATCH_QUERY_FRAMES = ['reference', 'current']
+    VALID_RANSAC_THRESHOLD_SPACES = ['full', 'processed']
     VALID_RANSAC_METHODS_DICT = {
         'cv2.LMEDS': cv2.LMEDS,  # 4
         'cv2.RANSAC': cv2.RANSAC,  # 8
@@ -111,6 +117,19 @@ class Stabilizer:
         cv2.USAC_MAGSAC: 'MAGSAC++',
     }
     VALID_AFFINE_RANSAC_METHODS = {cv2.LMEDS, cv2.RANSAC}
+
+    @classmethod
+    def configurable_keys(cls) -> frozenset:
+        """
+        Every key that can be passed to Stabilizer(...) or set in a configuration file.
+
+        These are exactly the keys of cfg/default.yaml, which is the single source of truth for
+        the options. `logger` is not among them: it is a constructor-only argument, popped
+        before the configuration is loaded. Exposed so a caller that forwards a user's
+        configuration can filter or check it against stabilo rather than keeping its own copy
+        of the list, which drifts as soon as stabilo gains an option.
+        """
+        return frozenset(cfg)
 
     @classmethod
     def describe_ransac_methods(cls, methods=None) -> list:
@@ -140,7 +159,11 @@ class Stabilizer:
         - match_query_frame: str - which descriptors are the knnMatch query: 'reference' (default) or 'current'
         - ransac_method: int - method for RANSAC algorithm (see above for options); with
           transformation_type='affine' only cv2.LMEDS (4) and cv2.RANSAC (8) are supported
-        - ransac_epipolar_threshold: float - threshold for RANSAC (e.g., 1.0)
+        - ransac_epipolar_threshold: float - reprojection-error threshold for RANSAC (e.g., 1.0), in the
+          pixel units named by ransac_threshold_space
+        - ransac_threshold_space: str - coordinate system ransac_epipolar_threshold is expressed in:
+          'full' (full-resolution pixels, the default) or 'processed' (downsampled-image pixels, which
+          keeps the threshold fixed relative to the keypoint localization noise as downsample_ratio varies)
         - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
         - ransac_confidence: float - confidence for RANSAC (e.g., 0.999)
         - brisk_threshold: int - threshold for BRISK detector (used only if 'max_features -> threshold' model is unavailable)
@@ -184,9 +207,31 @@ class Stabilizer:
     def _load_configuration(self, kwargs):
         """
         Load configuration parameters, using defaults if not provided.
+
+        Only the keys of cfg/default.yaml are honoured, so a keyword argument that is not one of
+        them has no effect and a misspelled parameter runs with the default. Unknown keys are
+        warned about, with the nearest valid name, rather than raising: callers that forward a
+        user's configuration block verbatim may carry keys stabilo does not know, and an
+        exception here would turn a typo in a downstream config into a crash inside this
+        constructor. A caller that wants strictness can check `Stabilizer.configurable_keys()`
+        before constructing.
         """
         for key, value in cfg.items():
             setattr(self, key, kwargs.get(key, value))
+
+        unknown = [key for key in kwargs if key not in cfg]
+        if unknown:
+            import difflib  # noqa: PLC0415 - only needed on the error path
+
+            described = []
+            for key in sorted(unknown):
+                close = difflib.get_close_matches(key, cfg, n=1, cutoff=0.7)
+                described.append(f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else ''))
+            self.logger.warning(
+                f"Ignoring {len(described)} unknown Stabilizer argument(s): {', '.join(described)}. "
+                "Only the keys of stabilo/cfg/default.yaml are configurable; the defaults are used "
+                "for anything else. Run 'stabilo config show' to list them."
+            )
 
     def _initialize_variables(self):
         """
@@ -773,7 +818,7 @@ class Stabilizer:
                     maxIters=self.ransac_max_iter,
                     method=self.ransac_method,
                     confidence=self.ransac_confidence,
-                    ransacReprojThreshold=self.ransac_epipolar_threshold,
+                    ransacReprojThreshold=self.get_ransac_reproj_threshold(),
                 )
             except cv2.error as e:
                 self.logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
@@ -1072,6 +1117,20 @@ class Stabilizer:
             len(self.cur_kpts) if self.cur_kpts is not None else None,
         )
 
+    def get_ransac_reproj_threshold(self) -> float:
+        """
+        Get the reprojection threshold actually handed to the estimator, in full-resolution pixels.
+
+        Correspondences are rescaled to full resolution before estimation, so the estimator's
+        threshold is always a full-resolution distance. With ransac_threshold_space='full' that is
+        ransac_epipolar_threshold itself. With 'processed' the configured value is a
+        processed-image distance, and rescaling multiplies it by 1 / downsample_ratio, exactly as it
+        multiplies the residuals the threshold has to separate. The two agree at downsample_ratio 1.0.
+        """
+        if self.ransac_threshold_space == 'processed':
+            return self.ransac_epipolar_threshold / self.downsample_ratio
+        return self.ransac_epipolar_threshold
+
     def get_basic_info(self) -> dict:
         """
         Get basic information about the Stabilizer.
@@ -1186,6 +1245,11 @@ class Stabilizer:
             raise ValueError("Invalid ransac_max_iter. It should be greater than 0 and an integer")
         if not (0.0 < self.ransac_epipolar_threshold):
             raise ValueError("Invalid ransac_epipolar_threshold. It should be greater than 0")
+        if self.ransac_threshold_space not in self.VALID_RANSAC_THRESHOLD_SPACES:
+            raise ValueError(
+                f"Invalid ransac_threshold_space: {self.ransac_threshold_space}. "
+                f"Choose from {self.VALID_RANSAC_THRESHOLD_SPACES}"
+            )
         if not (0.0 < self.ransac_confidence <= 1.0):
             raise ValueError("Invalid ransac_confidence. It should be in the range (0.0, 1.0]")
         if self.gpu:

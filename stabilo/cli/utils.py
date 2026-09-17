@@ -102,7 +102,9 @@ def add_stabilo_config_arguments(parser):
     group = parser.add_argument_group(
         "stabilo: transformation estimation",
         "'projective' works with every --ransac-method; 'affine' (cv2.estimateAffinePartial2D) accepts only "
-        f"{affine_methods} and is rejected with any other method.",
+        f"{affine_methods} and is rejected with any other method. The epipolar threshold is measured in "
+        "full-resolution pixels unless --ransac-threshold-space says otherwise, so a value tuned at one "
+        "--downsample-ratio does not transfer to another.",
     )
     group.add_argument(
         "--transformation-type",
@@ -123,6 +125,14 @@ def add_stabilo_config_arguments(parser):
     )
     group.add_argument(
         "--ransac-epipolar-threshold", "-ret", type=float, help="RANSAC epipolar threshold [default: 2.0]"
+    )
+    group.add_argument(
+        "--ransac-threshold-space",
+        "-rts",
+        type=str,
+        choices=Stabilizer.VALID_RANSAC_THRESHOLD_SPACES,
+        help="pixels the epipolar threshold is measured in: 'full' (full resolution) or 'processed' "
+        "(downsampled image, i.e. divided by the downsample ratio before estimation) [default: full]",
     )
     group.add_argument("--ransac-max-iter", "-rmi", type=int, help="RANSAC maximum iterations [default: 5000]")
     group.add_argument("--ransac-confidence", "-rc", type=float, help="RANSAC confidence [default: 0.999999]")
@@ -173,9 +183,16 @@ def separate_cli_arguments(cli_args):
     Get the command-line arguments and the corresponding keyword arguments for Stabilizer.
 
     Precedence (lowest to highest): stabilo/cfg/default.yaml < --custom-config file < explicit CLI flags.
+
+    The namespace also holds the subcommand's own options (the input path, --save, the
+    visualization flags, argparse's own `func`), which are not Stabilizer parameters. They are
+    filtered out here against `Stabilizer.configurable_keys()`; forwarded, they would be
+    reported as unrecognized arguments on every invocation. A `--custom-config` file is not
+    filtered, since a typo in a user's configuration is what that report exists to surface.
     """
     args = argparse.Namespace(**vars(cli_args))
-    explicit_kwargs = drop_none_values(vars(cli_args))
+    configurable = Stabilizer.configurable_keys()
+    explicit_kwargs = {k: v for k, v in drop_none_values(vars(cli_args)).items() if k in configurable}
 
     kwargs = {}
     if args.custom_config:
