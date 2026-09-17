@@ -10,6 +10,8 @@ import pytest
 
 from stabilo import Stabilizer, __version__
 from stabilo.cli import main
+from stabilo.cli import tracks as tracks_cli
+from stabilo.cli import video as video_cli
 from stabilo.cli.utils import WINDOWS, separate_cli_arguments
 from stabilo.cli.video import render_stabilization_visuals
 
@@ -84,6 +86,60 @@ def test_separate_cli_arguments():
     assert kwargs['viz'] is True
     assert kwargs['detector_name'] == 'orb'
     assert 'downsample_ratio' not in kwargs
+
+
+def test_subcommand_options_are_not_forwarded_to_the_stabilizer():
+    """
+    The namespace also holds the subcommand's own options, which are not Stabilizer parameters.
+
+    The Stabilizer reports arguments it does not recognize, so forwarding them would make the
+    CLI warn about its own flags on every invocation. They are filtered against
+    `Stabilizer.configurable_keys()` instead.
+    """
+    ns = argparse.Namespace(
+        input='x.mp4',
+        func=lambda: None,
+        save=True,
+        debug=False,
+        speed=10,
+        no_lines=False,
+        no_boxes=False,
+        ref_frame=0,
+        mask_enc='yolo',
+        no_mask=False,
+        viz=False,
+        save_viz=False,
+        custom_config=None,
+        detector_name='sift',
+    )
+    _, kwargs = separate_cli_arguments(ns)
+    assert set(kwargs) <= Stabilizer.configurable_keys()
+    assert kwargs['detector_name'] == 'sift'
+
+
+@pytest.mark.parametrize('subcommand', ['video', 'tracks'])
+def test_a_real_parse_forwards_only_configurable_keys(subcommand, tmp_path):
+    """The same guarantee through the actual parsers, so a new flag cannot reintroduce the leak."""
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest='command', required=True)
+    (video_cli if subcommand == 'video' else tracks_cli).configure_parser(subparsers)
+
+    clip = tmp_path / 'clip.mp4'
+    clip.touch()
+    args = parser.parse_args([subcommand, str(clip), '--save', '-dn', 'sift'])
+    _, kwargs = separate_cli_arguments(args)
+    assert set(kwargs) <= Stabilizer.configurable_keys()
+    assert kwargs['detector_name'] == 'sift'
+
+
+def test_a_custom_config_typo_is_forwarded_so_the_stabilizer_can_report_it(tmp_path):
+    """A user's configuration is not filtered: an unknown key there is what the warning is for."""
+    config_path = tmp_path / 'custom.yaml'
+    config_path.write_text("ransac_epipolar_treshold: 1.0\n")
+
+    ns = argparse.Namespace(input='x.mp4', no_mask=False, viz=False, save_viz=False, custom_config=config_path)
+    _, kwargs = separate_cli_arguments(ns)
+    assert kwargs['ransac_epipolar_treshold'] == 1.0
 
 
 def test_explicit_cli_flags_override_custom_config(tmp_path):

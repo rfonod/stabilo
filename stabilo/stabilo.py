@@ -119,6 +119,19 @@ class Stabilizer:
     VALID_AFFINE_RANSAC_METHODS = {cv2.LMEDS, cv2.RANSAC}
 
     @classmethod
+    def configurable_keys(cls) -> frozenset:
+        """
+        Every key that can be passed to Stabilizer(...) or set in a configuration file.
+
+        These are exactly the keys of cfg/default.yaml, which is the single source of truth for
+        the options. `logger` is not among them: it is a constructor-only argument, popped
+        before the configuration is loaded. Exposed so a caller that forwards a user's
+        configuration can filter or check it against stabilo rather than keeping its own copy
+        of the list, which drifts as soon as stabilo gains an option.
+        """
+        return frozenset(cfg)
+
+    @classmethod
     def describe_ransac_methods(cls, methods=None) -> list:
         """
         Render RANSAC methods as 'code (Name)' strings, sorted by code.
@@ -194,9 +207,31 @@ class Stabilizer:
     def _load_configuration(self, kwargs):
         """
         Load configuration parameters, using defaults if not provided.
+
+        Only the keys of cfg/default.yaml are honoured, so a keyword argument that is not one of
+        them has no effect and a misspelled parameter runs with the default. Unknown keys are
+        warned about, with the nearest valid name, rather than raising: callers that forward a
+        user's configuration block verbatim may carry keys stabilo does not know, and an
+        exception here would turn a typo in a downstream config into a crash inside this
+        constructor. A caller that wants strictness can check `Stabilizer.configurable_keys()`
+        before constructing.
         """
         for key, value in cfg.items():
             setattr(self, key, kwargs.get(key, value))
+
+        unknown = [key for key in kwargs if key not in cfg]
+        if unknown:
+            import difflib  # noqa: PLC0415 - only needed on the error path
+
+            described = []
+            for key in sorted(unknown):
+                close = difflib.get_close_matches(key, cfg, n=1, cutoff=0.7)
+                described.append(f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else ''))
+            self.logger.warning(
+                f"Ignoring {len(described)} unknown Stabilizer argument(s): {', '.join(described)}. "
+                "Only the keys of stabilo/cfg/default.yaml are configurable; the defaults are used "
+                "for anything else. Run 'stabilo config show' to list them."
+            )
 
     def _initialize_variables(self):
         """

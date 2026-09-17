@@ -183,9 +183,16 @@ def separate_cli_arguments(cli_args):
     Get the command-line arguments and the corresponding keyword arguments for Stabilizer.
 
     Precedence (lowest to highest): stabilo/cfg/default.yaml < --custom-config file < explicit CLI flags.
+
+    The namespace also holds the subcommand's own options (the input path, --save, the
+    visualization flags, argparse's own `func`), which are not Stabilizer parameters. They are
+    filtered out here against `Stabilizer.configurable_keys()`; forwarded, they would be
+    reported as unrecognized arguments on every invocation. A `--custom-config` file is not
+    filtered, since a typo in a user's configuration is what that report exists to surface.
     """
     args = argparse.Namespace(**vars(cli_args))
-    explicit_kwargs = drop_none_values(vars(cli_args))
+    configurable = Stabilizer.configurable_keys()
+    explicit_kwargs = {k: v for k, v in drop_none_values(vars(cli_args)).items() if k in configurable}
 
     kwargs = {}
     if args.custom_config:

@@ -2,9 +2,13 @@
 # -*- coding: utf-8 -*-
 # Author: Robert Fonod (robert.fonod@ieee.org)
 
+import logging
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
+import yaml
 
 from stabilo import Stabilizer
 
@@ -202,6 +206,68 @@ def test_invalid_ransac_epipolar_threshold():
 def test_invalid_ransac_confidence():
     with pytest.raises(ValueError):
         Stabilizer(ransac_confidence=1.5)
+
+
+class TestUnknownArgumentsAreReported:
+    """
+    A keyword argument that is not a key of cfg/default.yaml has no effect, so
+    `ransac_epipolar_treshold=1.0` leaves the threshold at its default; the Stabilizer reports
+    it rather than ignoring it in silence.
+
+    It warns rather than raising, and that is the load-bearing part. geo-trax forwards a user's
+    configuration block to `Stabilizer(**kwargs)` verbatim and has always been permitted to
+    carry keys stabilo does not know; raising would turn a typo in a downstream configuration
+    into a crash inside this constructor. Numerical behavior is unchanged either way: the
+    unknown key is ignored exactly as before, and every known key keeps its value.
+    """
+
+    @staticmethod
+    def _capturing_logger(name):
+        messages = []
+
+        class Collector(logging.Handler):
+            def emit(self, record):
+                messages.append(record.getMessage())
+
+        logger = logging.getLogger(name)
+        logger.handlers = [Collector()]
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        return logger, messages
+
+    def test_an_unknown_argument_warns_and_does_not_raise(self):
+        logger, messages = self._capturing_logger('unknown-argument')
+        stab = Stabilizer(logger=logger, nonexistent_option=123)
+        assert any('nonexistent_option' in message for message in messages)
+        assert not hasattr(stab, 'nonexistent_option')
+
+    def test_a_typo_suggests_the_key_that_was_meant(self):
+        logger, messages = self._capturing_logger('typo-argument')
+        Stabilizer(logger=logger, ransac_epipolar_treshold=1.0)
+        warning = ' '.join(messages)
+        assert 'ransac_epipolar_treshold' in warning
+        assert "did you mean 'ransac_epipolar_threshold'" in warning
+
+    def test_the_typo_is_still_ignored_exactly_as_before(self):
+        logger, _ = self._capturing_logger('typo-ignored')
+        stab = Stabilizer(logger=logger, ransac_epipolar_treshold=1.0)
+        assert stab.ransac_epipolar_threshold == 2.0  # the default, not the misspelled request
+
+    def test_valid_arguments_warn_about_nothing(self):
+        logger, messages = self._capturing_logger('valid-arguments')
+        Stabilizer(logger=logger, detector_name='sift', downsample_ratio=1.0, max_features=500)
+        assert not any('unknown' in message.lower() for message in messages)
+
+    def test_logger_is_not_reported_as_unknown(self):
+        logger, messages = self._capturing_logger('logger-argument')
+        Stabilizer(logger=logger)
+        assert not any('logger' in message for message in messages)
+
+
+def test_configurable_keys_are_exactly_the_configuration_file():
+    keys = yaml.safe_load(Path('stabilo/cfg/default.yaml').read_text())
+    assert Stabilizer.configurable_keys() == frozenset(keys)
+    assert 'logger' not in Stabilizer.configurable_keys()
 
 
 def test_invalid_ransac_threshold_space():
