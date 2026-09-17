@@ -37,6 +37,11 @@ Caveats:
     Use a classical detector or KeyNet for footage with large in-plane rotation.
   - The learning-based detectors are memory hungry at high resolution. Reduce downsample_ratio for
     large inputs; LoFTR in particular scales quadratically with the pixel count.
+  - ransac_epipolar_threshold does not transfer across values of downsample_ratio. Keypoints are
+    rescaled to full resolution before estimation, so the threshold is a full-resolution distance
+    by default, while the localization error it separates arises in the processed image and is
+    magnified by 1 / downsample_ratio. Re-tune the threshold when the ratio changes, or set
+    ransac_threshold_space='processed' to express it in processed-image pixels instead.
 
 Usage:
 1. Create an instance of the 'Stabilizer' class with desired parameter configurations.
@@ -88,6 +93,7 @@ class Stabilizer:
     VALID_FILTER_TYPES = ['none', 'ratio', 'distance']
     VALID_TRANSFORMATION_TYPES = ['projective', 'affine']
     VALID_MATCH_QUERY_FRAMES = ['reference', 'current']
+    VALID_RANSAC_THRESHOLD_SPACES = ['full', 'processed']
     VALID_RANSAC_METHODS_DICT = {
         'cv2.LMEDS': cv2.LMEDS,  # 4
         'cv2.RANSAC': cv2.RANSAC,  # 8
@@ -140,7 +146,11 @@ class Stabilizer:
         - match_query_frame: str - which descriptors are the knnMatch query: 'reference' (default) or 'current'
         - ransac_method: int - method for RANSAC algorithm (see above for options); with
           transformation_type='affine' only cv2.LMEDS (4) and cv2.RANSAC (8) are supported
-        - ransac_epipolar_threshold: float - threshold for RANSAC (e.g., 1.0)
+        - ransac_epipolar_threshold: float - reprojection-error threshold for RANSAC (e.g., 1.0), in the
+          pixel units named by ransac_threshold_space
+        - ransac_threshold_space: str - coordinate system ransac_epipolar_threshold is expressed in:
+          'full' (full-resolution pixels, the default) or 'processed' (downsampled-image pixels, which
+          keeps the threshold fixed relative to the keypoint localization noise as downsample_ratio varies)
         - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
         - ransac_confidence: float - confidence for RANSAC (e.g., 0.999)
         - brisk_threshold: int - threshold for BRISK detector (used only if 'max_features -> threshold' model is unavailable)
@@ -773,7 +783,7 @@ class Stabilizer:
                     maxIters=self.ransac_max_iter,
                     method=self.ransac_method,
                     confidence=self.ransac_confidence,
-                    ransacReprojThreshold=self.ransac_epipolar_threshold,
+                    ransacReprojThreshold=self.get_ransac_reproj_threshold(),
                 )
             except cv2.error as e:
                 self.logger.exception(f"Transformation matrix couldn't be calculated.\n Error: {e}")
@@ -1072,6 +1082,20 @@ class Stabilizer:
             len(self.cur_kpts) if self.cur_kpts is not None else None,
         )
 
+    def get_ransac_reproj_threshold(self) -> float:
+        """
+        Get the reprojection threshold actually handed to the estimator, in full-resolution pixels.
+
+        Correspondences are rescaled to full resolution before estimation, so the estimator's
+        threshold is always a full-resolution distance. With ransac_threshold_space='full' that is
+        ransac_epipolar_threshold itself. With 'processed' the configured value is a
+        processed-image distance, and rescaling multiplies it by 1 / downsample_ratio, exactly as it
+        multiplies the residuals the threshold has to separate. The two agree at downsample_ratio 1.0.
+        """
+        if self.ransac_threshold_space == 'processed':
+            return self.ransac_epipolar_threshold / self.downsample_ratio
+        return self.ransac_epipolar_threshold
+
     def get_basic_info(self) -> dict:
         """
         Get basic information about the Stabilizer.
@@ -1186,6 +1210,11 @@ class Stabilizer:
             raise ValueError("Invalid ransac_max_iter. It should be greater than 0 and an integer")
         if not (0.0 < self.ransac_epipolar_threshold):
             raise ValueError("Invalid ransac_epipolar_threshold. It should be greater than 0")
+        if self.ransac_threshold_space not in self.VALID_RANSAC_THRESHOLD_SPACES:
+            raise ValueError(
+                f"Invalid ransac_threshold_space: {self.ransac_threshold_space}. "
+                f"Choose from {self.VALID_RANSAC_THRESHOLD_SPACES}"
+            )
         if not (0.0 < self.ransac_confidence <= 1.0):
             raise ValueError("Invalid ransac_confidence. It should be in the range (0.0, 1.0]")
         if self.gpu:

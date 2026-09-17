@@ -59,7 +59,16 @@ match_query_frame: 'reference'  # Which frame's descriptors are the knnMatch que
 # Transformation estimation
 # -----------------------------------------------------------------------------
 # The estimated matrix maps the current frame onto the reference frame, so the
-# RANSAC reprojection threshold is expressed in reference-frame pixels.
+# RANSAC reprojection threshold is evaluated in reference-frame pixels.
+#
+# Which pixels depends on 'ransac_threshold_space'. Keypoints are rescaled to full
+# resolution before the estimator sees them, so under 'full' the threshold is a
+# full-resolution distance at any 'downsample_ratio', while the localization error
+# it separates arises in the processed image and is magnified by 1/downsample_ratio.
+# A fixed threshold is therefore stricter at a low ratio, and a value tuned at one
+# ratio does not transfer to another. 'processed' measures it in processed-image
+# pixels instead, passing ransac_epipolar_threshold / downsample_ratio to the
+# estimator. The two agree at downsample_ratio: 1.0. See docs/usage.md section 11.
 #
 # Not every ransac_method works with every transformation_type. 'projective'
 # (cv2.findHomography) accepts all of them, whereas 'affine'
@@ -67,7 +76,8 @@ match_query_frame: 'reference'  # Which frame's descriptors are the knnMatch que
 # code, including the default 38, is rejected when the Stabilizer is created.
 transformation_type: 'projective'  # ['projective' (3x3 homography, any ransac_method), 'affine' (2x3, ransac_method 4 or 8 only)]
 ransac_method: 38  # [4: LMEDS, 8: RANSAC, 16: RHO, 32: USAC-Default (LO-RANSAC), 33: USAC-Parallel (LO-RANSAC), 35: USAC-Fast (LO-RANSAC), 36: USAC-Accurate (GC-RANSAC), 37: PROSAC, 38: MAGSAC++]
-ransac_epipolar_threshold: 2.0  # Reprojection-error threshold in pixels; (0.0, inf)
+ransac_epipolar_threshold: 2.0  # Reprojection-error threshold, in pixels of ransac_threshold_space; (0.0, inf)
+ransac_threshold_space: 'full'  # Pixels ransac_epipolar_threshold is measured in; ['full' (full resolution), 'processed' (downsampled image)]
 ransac_max_iter: 5000  # Max. RANSAC iterations; (0, inf)
 ransac_confidence: 0.999999  # Required RANSAC confidence level; (0.0, 1.0]
 

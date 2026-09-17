@@ -204,6 +204,56 @@ def test_invalid_ransac_confidence():
         Stabilizer(ransac_confidence=1.5)
 
 
+def test_invalid_ransac_threshold_space():
+    with pytest.raises(ValueError, match='ransac_threshold_space'):
+        Stabilizer(ransac_threshold_space='downsampled')
+
+
+@pytest.mark.parametrize('threshold_space', Stabilizer.VALID_RANSAC_THRESHOLD_SPACES)
+def test_threshold_spaces_agree_at_full_resolution(threshold_space):
+    """At downsample_ratio 1.0 there is no rescaling, so the two conventions coincide."""
+    stab = Stabilizer(downsample_ratio=1.0, ransac_epipolar_threshold=2.0, ransac_threshold_space=threshold_space)
+    assert stab.get_ransac_reproj_threshold() == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize('downsample_ratio', [0.18, 0.25, 0.5, 0.75])
+def test_threshold_spaces_differ_by_exactly_the_downsample_ratio(downsample_ratio):
+    """'processed' converts to the estimator's full-resolution units; 'full' (the default) does not."""
+    kwargs = {'downsample_ratio': downsample_ratio, 'ransac_epipolar_threshold': 2.0}
+
+    default = Stabilizer(**kwargs)
+    full = Stabilizer(**kwargs, ransac_threshold_space='full')
+    processed = Stabilizer(**kwargs, ransac_threshold_space='processed')
+
+    assert default.ransac_threshold_space == 'full'
+    assert default.get_ransac_reproj_threshold() == full.get_ransac_reproj_threshold() == pytest.approx(2.0)
+    assert processed.get_ransac_reproj_threshold() == pytest.approx(2.0 / downsample_ratio)
+
+
+@pytest.mark.parametrize(
+    ('threshold_space', 'expected'),
+    [('full', 2.0), ('processed', 8.0)],
+)
+def test_the_estimator_receives_the_converted_threshold(images, threshold_space, expected):
+    """The conversion must reach cv2.findHomography, not merely the getter."""
+    cur_frame, ref_frame = images
+    stab = Stabilizer(downsample_ratio=0.25, ransac_epipolar_threshold=2.0, ransac_threshold_space=threshold_space)
+
+    seen = []
+    transformer = stab.transformer
+
+    def recording_transformer(*args, **kwargs):
+        seen.append(kwargs['ransacReprojThreshold'])
+        return transformer(*args, **kwargs)
+
+    stab.transformer = recording_transformer
+
+    stab.set_ref_frame(ref_frame)
+    stab.stabilize(cur_frame)
+
+    assert seen == [pytest.approx(expected)]
+
+
 def test_set_ref_frame(default_stabilizer, images):
     _, ref_frame = images
     default_stabilizer.set_ref_frame(ref_frame)
