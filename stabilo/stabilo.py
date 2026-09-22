@@ -698,6 +698,10 @@ class Stabilizer:
         try:
             kpts, desc = detector.detectAndCompute(model_input, mask_ds)
         except (RuntimeError, ValueError) as e:
+            from . import dl
+
+            if dl.is_resource_error(e):
+                raise
             self.logger.warning(f"Features and descriptors couldn't be found. \n Error: {e}")
             return None, None, None
 

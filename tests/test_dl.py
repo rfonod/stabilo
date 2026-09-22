@@ -52,6 +52,61 @@ def test_invalid_loftr_confidence():
         Stabilizer(loftr_confidence=1.5)
 
 
+# --- resource-error propagation (needs kornia importable, but no weights) ---
+
+requires_kornia = pytest.mark.skipif(not KORNIA, reason='kornia is not installed')
+
+
+class _RaisingDetector:
+    wants = 'gray'
+
+    def __init__(self, error):
+        self.error = error
+
+    def detectAndCompute(self, image, mask):
+        raise self.error
+
+
+def _dl_features_with(error, ref_frame=True):
+    stab = Stabilizer(detector_name='orb', downsample_ratio=1.0, mask_use=False, clahe=False)
+    stab.detector_ref = stab.detector_cur = _RaisingDetector(error)
+    frame = np.zeros((64, 64, 3), dtype=np.uint8)
+    return stab._get_features_and_descriptors_dl(frame, None, ref_frame)
+
+
+@requires_kornia
+@pytest.mark.parametrize(
+    'make_error',
+    [
+        lambda: pytest.importorskip('torch').OutOfMemoryError('CUDA out of memory. Tried to allocate 20.00 GiB'),
+        lambda: RuntimeError('MPS backend out of memory (MPS allocated: 18.00 GB, other allocations: 1.2 GB)'),
+        lambda: RuntimeError('Invalid buffer size: 24.00 GB'),
+        lambda: RuntimeError("DefaultCPUAllocator: can't allocate memory: you tried to allocate 68719476736 bytes."),
+        lambda: RuntimeError('DefaultCPUAllocator: not enough memory: you tried to allocate 68719476736 bytes.'),
+    ],
+    ids=['torch-oom', 'mps-oom', 'mps-buffer', 'cpu-linux', 'cpu-windows'],
+)
+@pytest.mark.parametrize('ref_frame', [True, False])
+def test_dl_resource_error_propagates(make_error, ref_frame):
+    error = make_error()
+    with pytest.raises(type(error)) as excinfo:
+        _dl_features_with(error, ref_frame)
+    assert excinfo.value is error
+
+
+@requires_kornia
+@pytest.mark.parametrize(
+    'error',
+    [
+        RuntimeError('The size of tensor a (64) must match the size of tensor b (32) at non-singleton dimension 1'),
+        RuntimeError('cannot reshape tensor of 0 elements into shape [-1, 0]'),
+        ValueError('Expected more than 1 value per channel'),
+    ],
+)
+def test_dl_ordinary_failure_is_still_caught(error):
+    assert _dl_features_with(error) == (None, None, None)
+
+
 # --- end-to-end tests requiring kornia (weights download on first run) ---
 
 

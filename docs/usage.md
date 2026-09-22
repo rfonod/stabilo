@@ -385,6 +385,8 @@ Stabilo emits a warning, but does not cap the resolution, when the processed fra
 
 These are guidelines for a machine with a few GB of free RAM, not hard limits; a large GPU tolerates more. Lower `downsample_ratio` further if the process is killed or the machine begins to swap.
 
+Running out of device memory is raised, not treated as an unregistrable frame. A `torch.OutOfMemoryError`, or a `RuntimeError` whose message says the device or host allocator ran out of memory (including MPS's `Invalid buffer size`), propagates out of `set_ref_frame(...)` and `stabilize(...)` so the caller can tell an infeasible configuration apart from an estimation failure. Before v1.4.3, the sparse detectors (`xfeat`, `disk`, `dedode`, `keynet`) caught it, logged that no features were found, and fell back like any other failed frame; `loftr` and `lightglue` always raised it.
+
 ---
 
 ## 10. Feature Matching and Filtering
