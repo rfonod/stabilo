@@ -75,6 +75,25 @@ def resolve_device(device: str) -> torch.device:
     return torch.device(device)
 
 
+_RESOURCE_ERROR_MESSAGES = (
+    'out of memory',
+    'not enough memory',
+    "can't allocate memory",
+    'cannot allocate memory',
+    'invalid buffer size',
+)
+
+
+def is_resource_error(error: BaseException) -> bool:
+    """
+    Whether an exception raised by a model means the device ran out of memory.
+    """
+    if isinstance(error, (MemoryError, torch.cuda.OutOfMemoryError)):
+        return True
+    message = str(error).lower()
+    return any(needle in message for needle in _RESOURCE_ERROR_MESSAGES)
+
+
 def to_tensor_gray(img_u8: np.ndarray, device: torch.device) -> torch.Tensor:
     """
     Convert an HxW uint8 grayscale image to a (1, 1, H, W) float tensor in [0, 1].
