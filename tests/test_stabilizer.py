@@ -377,6 +377,33 @@ def test_create_binary_mask(default_stabilizer, images):
     assert mask.shape == (ref_frame.shape[0], ref_frame.shape[1])
 
 
+@pytest.mark.parametrize(
+    'box_format, box',
+    [
+        ('xywh', [-100, 200, 50, 40]),  # wholly left of the frame
+        ('xywh', [200, -100, 50, 40]),  # wholly above
+        ('xywh', [-100, -100, 50, 40]),  # above and to the left
+        ('four', [-125, 180, -75, 180, -75, 220, -125, 220]),  # axis-aligned, wholly left
+        ('four', [180, -125, 220, -125, 220, -75, 180, -75]),  # axis-aligned, wholly above
+    ],
+)
+def test_create_binary_mask_box_outside_frame_excludes_nothing(default_stabilizer, images, box_format, box):
+    _, ref_frame = images
+    default_stabilizer.set_ref_frame(ref_frame)
+    mask = default_stabilizer.create_binary_mask(np.array([box], dtype=float), box_format)
+    assert (mask == 255).all()
+
+
+def test_create_binary_mask_box_across_the_edge_excludes_only_its_visible_part(default_stabilizer, images):
+    _, ref_frame = images
+    default_stabilizer.set_ref_frame(ref_frame)
+    margin = 1 + default_stabilizer.mask_margin_ratio
+    mask = default_stabilizer.create_binary_mask(np.array([[0.0, 100.0, 40.0, 20.0]]), 'xywh')
+    x2, y1, y2 = int(40 * margin / 2), int(100 - 20 * margin / 2), int(100 + 20 * margin / 2)
+    assert (mask[y1:y2, :x2] == 0).all()
+    assert (mask == 0).sum() == x2 * (y2 - y1)
+
+
 def test_get_basic_info(default_stabilizer):
     info = default_stabilizer.get_basic_info()
     assert isinstance(info, dict)

@@ -917,7 +917,7 @@ class Stabilizer:
                     wb += wb * self.mask_margin_ratio
                     hb += hb * self.mask_margin_ratio
                     x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
-                    mask[max(0, y1) : min(self.h, y2), max(0, x1) : min(self.w, x2)] = 0
+                    self._exclude_rectangle(mask, x1, y1, x2, y2)
 
         elif box_format == 'xywh':
             # Axis-aligned boxes
@@ -926,7 +926,7 @@ class Stabilizer:
                 wb += wb * self.mask_margin_ratio
                 hb += hb * self.mask_margin_ratio
                 x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
-                mask[max(0, y1) : min(self.h, y2), max(0, x1) : min(self.w, x2)] = 0
+                self._exclude_rectangle(mask, x1, y1, x2, y2)
 
         elif box_format == 'polygon':
             # Polygon masks (arbitrary number of vertices)
@@ -953,6 +953,19 @@ class Stabilizer:
             sys.exit(1)
 
         return mask
+
+    @staticmethod
+    def _exclude_rectangle(mask: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> None:
+        """
+        Zero the part of an axis-aligned rectangle that lies inside the mask.
+
+        Both ends are clipped to the frame: a negative end index would count from the far edge, so
+        a box wholly left of or above the frame would otherwise exclude nearly the whole frame.
+        """
+        h, w = mask.shape[:2]
+        x1, x2 = min(max(x1, 0), w), min(max(x2, 0), w)
+        y1, y2 = min(max(y1, 0), h), min(max(y2, 0), h)
+        mask[y1:y2, x1:x2] = 0
 
     def _normalize_polygon_masks(self, polygons) -> list[np.ndarray]:
         """
