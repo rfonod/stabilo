@@ -229,6 +229,8 @@ The `mask_margin_ratio` parameter (default `0.15`) **expands** each exclusion re
 
 Masks for the reference and current frame are **independent** — each frame may have its own set of exclusion boxes.
 
+Regions are clipped to the frame: one that is partly outside excludes only its visible part, and one wholly outside the frame excludes nothing. A region with a `NaN` or infinite coordinate is skipped with a warning instead of stopping the run.
+
 If `mask_use=False`, no mask is created even if boxes are supplied.
 
 ---
