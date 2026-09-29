@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from stabilo import Stabilizer
+from stabilo.utils import xywh2four
 
 
 @pytest.fixture
@@ -208,6 +209,20 @@ def test_invalid_ransac_confidence():
         Stabilizer(ransac_confidence=1.5)
 
 
+def _capturing_logger(name):
+    messages = []
+
+    class Collector(logging.Handler):
+        def emit(self, record):
+            messages.append(record.getMessage())
+
+    logger = logging.getLogger(name)
+    logger.handlers = [Collector()]
+    logger.propagate = False
+    logger.setLevel(logging.DEBUG)
+    return logger, messages
+
+
 class TestUnknownArgumentsAreReported:
     """
     A keyword argument that is not a key of cfg/default.yaml has no effect, so
@@ -221,45 +236,31 @@ class TestUnknownArgumentsAreReported:
     unknown key is ignored exactly as before, and every known key keeps its value.
     """
 
-    @staticmethod
-    def _capturing_logger(name):
-        messages = []
-
-        class Collector(logging.Handler):
-            def emit(self, record):
-                messages.append(record.getMessage())
-
-        logger = logging.getLogger(name)
-        logger.handlers = [Collector()]
-        logger.propagate = False
-        logger.setLevel(logging.DEBUG)
-        return logger, messages
-
     def test_an_unknown_argument_warns_and_does_not_raise(self):
-        logger, messages = self._capturing_logger('unknown-argument')
+        logger, messages = _capturing_logger('unknown-argument')
         stab = Stabilizer(logger=logger, nonexistent_option=123)
         assert any('nonexistent_option' in message for message in messages)
         assert not hasattr(stab, 'nonexistent_option')
 
     def test_a_typo_suggests_the_key_that_was_meant(self):
-        logger, messages = self._capturing_logger('typo-argument')
+        logger, messages = _capturing_logger('typo-argument')
         Stabilizer(logger=logger, ransac_epipolar_treshold=1.0)
         warning = ' '.join(messages)
         assert 'ransac_epipolar_treshold' in warning
         assert "did you mean 'ransac_epipolar_threshold'" in warning
 
     def test_the_typo_is_still_ignored_exactly_as_before(self):
-        logger, _ = self._capturing_logger('typo-ignored')
+        logger, _ = _capturing_logger('typo-ignored')
         stab = Stabilizer(logger=logger, ransac_epipolar_treshold=1.0)
         assert stab.ransac_epipolar_threshold == 2.0  # the default, not the misspelled request
 
     def test_valid_arguments_warn_about_nothing(self):
-        logger, messages = self._capturing_logger('valid-arguments')
+        logger, messages = _capturing_logger('valid-arguments')
         Stabilizer(logger=logger, detector_name='sift', downsample_ratio=1.0, max_features=500)
         assert not any('unknown' in message.lower() for message in messages)
 
     def test_logger_is_not_reported_as_unknown(self):
-        logger, messages = self._capturing_logger('logger-argument')
+        logger, messages = _capturing_logger('logger-argument')
         Stabilizer(logger=logger)
         assert not any('logger' in message for message in messages)
 
@@ -394,14 +395,134 @@ def test_create_binary_mask_box_outside_frame_excludes_nothing(default_stabilize
     assert (mask == 255).all()
 
 
-def test_create_binary_mask_box_across_the_edge_excludes_only_its_visible_part(default_stabilizer, images):
+def test_create_binary_mask_box_across_the_edge_excludes_only_its_visible_part(images):
     _, ref_frame = images
-    default_stabilizer.set_ref_frame(ref_frame)
-    margin = 1 + default_stabilizer.mask_margin_ratio
-    mask = default_stabilizer.create_binary_mask(np.array([[0.0, 100.0, 40.0, 20.0]]), 'xywh')
-    x2, y1, y2 = int(40 * margin / 2), int(100 - 20 * margin / 2), int(100 + 20 * margin / 2)
-    assert (mask[y1:y2, :x2] == 0).all()
-    assert (mask == 0).sum() == x2 * (y2 - y1)
+    stab = Stabilizer(downsample_ratio=1.0, mask_margin_ratio=0.0)
+    stab.set_ref_frame(ref_frame)
+    # x spans [-20.5, 20.5] and y spans [89.8, 110.8]; corners are truncated to (-20, 89) and (20, 110)
+    expected = np.full(ref_frame.shape[:2], 255, dtype=np.uint8)
+    expected[89:110, 0:20] = 0
+    box = [0.0, 100.3, 41.0, 21.0]
+    np.testing.assert_array_equal(stab.create_binary_mask(np.array([box]), 'xywh'), expected)
+    np.testing.assert_array_equal(stab.create_binary_mask(xywh2four(np.array([box])), 'four'), expected)
+
+
+@pytest.mark.parametrize(
+    'box_format, valid, broken',
+    [
+        ('xywh', [100, 100, 40, 40], [np.nan, 100, 40, 40]),
+        ('xywh', [100, 100, 40, 40], [100, 100, np.inf, 40]),
+        ('xywha', [100, 100, 40, 40, 30], [100, 100, 40, np.nan, 30]),
+        ('four', [80, 80, 120, 80, 120, 120, 80, 120], [80, 80, np.nan, 80, 120, 120, 80, 120]),
+        ('four', [90, 80, 120, 90, 110, 120, 80, 110], [90, 80, 120, 90, 110, -np.inf, 80, 110]),
+        ('polygon', [80, 80, 120, 80, 100, 120], [80, 80, 120, np.nan, 100, 120]),
+        ('circle', [100, 100, 20], [100, np.nan, 20]),
+    ],
+)
+def test_create_binary_mask_skips_non_finite_boxes(images, box_format, valid, broken):
+    _, ref_frame = images
+    logger, messages = _capturing_logger(f'non-finite-{box_format}')
+    stab = Stabilizer(downsample_ratio=1.0, logger=logger)
+    stab.set_ref_frame(ref_frame)
+    mask = stab.create_binary_mask(np.array([valid, broken], dtype=float), box_format)
+    np.testing.assert_array_equal(mask, stab.create_binary_mask(np.array([valid], dtype=float), box_format))
+    assert any('non-finite' in message for message in messages)
+
+
+def test_stabilize_survives_a_non_finite_box(images):
+    cur_frame, ref_frame = images
+    boxes = np.array([[100.0, 150.0, 60.0, 40.0], [np.nan, np.nan, np.nan, np.nan]])
+    stab = Stabilizer(downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame, boxes)
+    stab.stabilize(cur_frame, boxes)
+    assert stab.get_cur_trans_matrix() is not None
+
+
+@pytest.mark.parametrize(
+    'box_format, box',
+    [
+        ('four', [362 - 3e9, 251, 362, 251 - 3e9, 362 + 3e9, 251, 362, 251 + 3e9]),  # diamond around the frame
+        ('xywha', [362, 251, 6e9, 6e9, 45]),
+        ('polygon', [362 - 3e9, 251, 362, 251 - 3e9, 362 + 3e9, 251]),  # triangle over the frame
+    ],
+)
+def test_create_binary_mask_huge_region_covering_the_frame_excludes_all_of_it(images, box_format, box):
+    _, ref_frame = images
+    stab = Stabilizer(downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+    assert (stab.create_binary_mask(np.array([box]), box_format) == 0).all()
+
+
+@pytest.mark.parametrize(
+    'box_format, box',
+    [
+        ('four', [3e9, 100, 3e9 + 50, 120, 3e9 + 30, 170, 3e9 - 20, 150]),
+        ('xywha', [-3e9, 100, 50, 40, 30]),
+        ('polygon', [100, 3e9, 150, 3e9, 125, 3e9 + 40]),
+        ('circle', [3e9, 3e9, 20]),
+        ('circle', [-3e9, 100, 20]),
+    ],
+)
+def test_create_binary_mask_region_far_outside_the_frame_excludes_nothing(images, box_format, box):
+    _, ref_frame = images
+    stab = Stabilizer(downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+    assert (stab.create_binary_mask(np.array([box]), box_format) == 255).all()
+
+
+def test_create_binary_mask_clipping_keeps_the_visible_part_of_a_huge_polygon(images):
+    _, ref_frame = images
+    stab = Stabilizer(downsample_ratio=1.0, mask_margin_ratio=0.0)
+    stab.set_ref_frame(ref_frame)
+    # The same triangle under y = x / 2, once with vertices past the int32 range and once without.
+    # Clamping (or saturating) the far vertices would bend the hypotenuse to y = x.
+    huge = stab.create_binary_mask(np.array([[0, 0, 6e9, 0, 6e9, 3e9]]), 'polygon')
+    small = stab.create_binary_mask(np.array([[0, 0, 2000, 0, 2000, 1000]]), 'polygon')
+    np.testing.assert_array_equal(huge, small)
+    assert 0 < (huge == 0).sum() < huge.size
+
+
+def _legacy_rectangle_mask(stab, boxes):
+    """The pre-1.4.4 xywh mask: the end index was clipped only against the far edge."""
+    mask = np.full((stab.h, stab.w), 255, dtype=np.uint8)
+    for xc, yc, width, height in boxes:
+        wb = width + width * stab.mask_margin_ratio
+        hb = height + height * stab.mask_margin_ratio
+        x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
+        mask[max(0, y1) : min(stab.h, y2), max(0, x1) : min(stab.w, x2)] = 0
+    return mask
+
+
+def _masked_homography(images, ref_boxes, cur_boxes, mask_fn=None):
+    cur_frame, ref_frame = images
+    stab = Stabilizer(downsample_ratio=1.0)
+    if mask_fn is not None:
+        stab.create_binary_mask = lambda boxes, box_format: mask_fn(stab, boxes)
+    stab.set_ref_frame(ref_frame, ref_boxes)
+    stab.stabilize(cur_frame, cur_boxes)
+    return stab.get_cur_trans_matrix()
+
+
+def test_in_frame_box_masks_keep_the_previous_homography(images):
+    ref_boxes = np.array([[100.4, 140.7, 41.3, 80.9], [350.5, 300.2, 119.6, 40.1], [600.9, 420.3, 80.2, 79.7]])
+    cur_boxes = np.array([[320.2, 240.8, 80.5, 40.4], [450.7, 140.1, 39.9, 120.3], [150.6, 400.4, 120.8, 80.6]])
+    stab = Stabilizer(downsample_ratio=1.0)
+    stab.set_ref_frame(images[1])
+    for boxes in (ref_boxes, cur_boxes):
+        np.testing.assert_array_equal(stab.create_binary_mask(boxes, 'xywh'), _legacy_rectangle_mask(stab, boxes))
+
+    np.testing.assert_array_equal(
+        _masked_homography(images, ref_boxes, cur_boxes),
+        _masked_homography(images, ref_boxes, cur_boxes, mask_fn=_legacy_rectangle_mask),
+    )
+
+
+def test_out_of_frame_box_masks_give_the_unmasked_homography(images):
+    boxes = np.array([[-100.0, 200.0, 50.0, 40.0], [200.0, -100.0, 50.0, 40.0]])
+    unmasked = _masked_homography(images, None, None)
+    np.testing.assert_array_equal(_masked_homography(images, boxes, boxes), unmasked)
+    # Before 1.4.4 these boxes excluded nearly the whole frame and moved the estimate.
+    assert not np.array_equal(_masked_homography(images, boxes, boxes, mask_fn=_legacy_rectangle_mask), unmasked)
 
 
 def test_get_basic_info(default_stabilizer):

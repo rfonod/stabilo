@@ -58,7 +58,7 @@ from typing import Union
 import cv2
 import numpy as np
 
-from .utils import four2xywh, is_box_rotated, load_config, setup_logger, timer, xywh2four, xywha2four
+from .utils import clip_polygon, four2xywh, is_box_rotated, load_config, setup_logger, timer, xywh2four, xywha2four
 from .version_check import check_for_updates_once
 
 # Configure logging
@@ -117,6 +117,7 @@ class Stabilizer:
         cv2.USAC_MAGSAC: 'MAGSAC++',
     }
     VALID_AFFINE_RANSAC_METHODS = {cv2.LMEDS, cv2.RANSAC}
+    MASK_COORD_LIMIT = 2**30
 
     @classmethod
     def configurable_keys(cls) -> frozenset:
@@ -886,7 +887,7 @@ class Stabilizer:
 
         if box_format == 'xywha':
             # Oriented bounding boxes with explicit angle
-            for box in boxes:
+            for box in self._drop_non_finite(boxes):
                 xc, yc, wb, hb, angle = box
                 # Apply margin
                 wb_margin = wb * (1 + self.mask_margin_ratio)
@@ -894,13 +895,11 @@ class Stabilizer:
                 # Convert to four-point format with margin
                 box_with_margin = np.array([[xc, yc, wb_margin, hb_margin, angle]])
                 four_points = xywha2four(box_with_margin)[0]
-                # Reshape to polygon format for fillPoly
-                pts = four_points.reshape(4, 2).astype(np.int32)
-                cv2.fillPoly(mask, [pts], 0)
+                self._exclude_polygon(mask, np.trunc(four_points.reshape(4, 2)))
 
         elif box_format == 'four':
             # Four-point format - check if boxes are rotated
-            for box in boxes:
+            for box in self._drop_non_finite(boxes):
                 if is_box_rotated(box):
                     # Oriented box - use polygon filling
                     # Apply margin by scaling around center
@@ -908,33 +907,21 @@ class Stabilizer:
                     center = points.mean(axis=0)
                     # Scale points away from center to apply margin
                     scale_factor = 1 + self.mask_margin_ratio
-                    points_margin = center + (points - center) * scale_factor
-                    pts = points_margin.astype(np.int32)
-                    cv2.fillPoly(mask, [pts], 0)
+                    self._exclude_polygon(mask, np.trunc(center + (points - center) * scale_factor))
                 else:
                     # Axis-aligned box - use fast rectangular masking
-                    xc, yc, wb, hb = four2xywh(box.reshape(1, -1))[0]
-                    wb += wb * self.mask_margin_ratio
-                    hb += hb * self.mask_margin_ratio
-                    x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
-                    self._exclude_rectangle(mask, x1, y1, x2, y2)
+                    self._exclude_rectangle(mask, *four2xywh(box.reshape(1, -1))[0])
 
         elif box_format == 'xywh':
             # Axis-aligned boxes
-            for box in boxes:
-                xc, yc, wb, hb = box
-                wb += wb * self.mask_margin_ratio
-                hb += hb * self.mask_margin_ratio
-                x1, y1, x2, y2 = int(xc - wb / 2), int(yc - hb / 2), int(xc + wb / 2), int(yc + hb / 2)
-                self._exclude_rectangle(mask, x1, y1, x2, y2)
+            for box in self._drop_non_finite(boxes):
+                self._exclude_rectangle(mask, *box)
 
         elif box_format == 'polygon':
             # Polygon masks (arbitrary number of vertices)
-            for points in self._normalize_polygon_masks(boxes):
+            for points in self._drop_non_finite(self._normalize_polygon_masks(boxes)):
                 center = points.mean(axis=0)
-                points_margin = center + (points - center) * (1 + self.mask_margin_ratio)
-                pts = np.round(points_margin).astype(np.int32)
-                cv2.fillPoly(mask, [pts], 0)
+                self._exclude_polygon(mask, np.round(center + (points - center) * (1 + self.mask_margin_ratio)))
 
         elif box_format == 'circle':
             # Circle masks [xc, yc, radius]
@@ -944,9 +931,13 @@ class Stabilizer:
             if circles.ndim != 2 or circles.shape[1] != 3:
                 self.logger.error("Circle format requires shape (N, 3) with [x_center, y_center, radius].")
                 sys.exit(1)
-            for xc, yc, radius in circles:
+            for xc, yc, radius in self._drop_non_finite(circles):
                 radius_margin = max(int(round(radius * (1 + self.mask_margin_ratio))), 1)
-                cv2.circle(mask, (int(round(xc)), int(round(yc))), radius_margin, 0, thickness=-1)
+                center = int(round(xc)), int(round(yc))
+                nearest = min(max(center[0], 0), self.w), min(max(center[1], 0), self.h)
+                if np.hypot(center[0] - nearest[0], center[1] - nearest[1]) > radius_margin + 1:
+                    continue
+                cv2.circle(mask, center, radius_margin, 0, thickness=-1)
 
         else:
             self.logger.error(f"Unsupported box format: {box_format}")
@@ -954,18 +945,39 @@ class Stabilizer:
 
         return mask
 
-    @staticmethod
-    def _exclude_rectangle(mask: np.ndarray, x1: int, y1: int, x2: int, y2: int) -> None:
+    def _drop_non_finite(self, boxes) -> list:
         """
-        Zero the part of an axis-aligned rectangle that lies inside the mask.
+        Return the boxes whose coordinates are all finite, warning about any that are not.
+        """
+        finite = [box for box in boxes if np.isfinite(box).all()]
+        if len(finite) < len(boxes):
+            self.logger.warning(f"Skipped {len(boxes) - len(finite)} exclusion region(s) with non-finite coordinates.")
+        return finite
+
+    def _exclude_rectangle(self, mask: np.ndarray, xc: float, yc: float, wb: float, hb: float) -> None:
+        """
+        Zero the part of an axis-aligned box, grown by the mask margin, that lies inside the mask.
 
         Both ends are clipped to the frame: a negative end index would count from the far edge, so
         a box wholly left of or above the frame would otherwise exclude nearly the whole frame.
         """
+        wb += wb * self.mask_margin_ratio
+        hb += hb * self.mask_margin_ratio
         h, w = mask.shape[:2]
-        x1, x2 = min(max(x1, 0), w), min(max(x2, 0), w)
-        y1, y2 = min(max(y1, 0), h), min(max(y2, 0), h)
+        x1, x2 = (min(max(int(x), 0), w) for x in (xc - wb / 2, xc + wb / 2))
+        y1, y2 = (min(max(int(y), 0), h) for y in (yc - hb / 2, yc + hb / 2))
         mask[y1:y2, x1:x2] = 0
+
+    def _exclude_polygon(self, mask: np.ndarray, points: np.ndarray) -> None:
+        """
+        Zero the polygon given by its (N, 2) whole-pixel vertices in the mask.
+        """
+        limit = self.MASK_COORD_LIMIT
+        if np.abs(points).max() > limit:
+            points = clip_polygon(points, -limit, limit)
+            if len(points) < 3:
+                return
+        cv2.fillPoly(mask, [points.astype(np.int32)], 0)
 
     def _normalize_polygon_masks(self, polygons) -> list[np.ndarray]:
         """
