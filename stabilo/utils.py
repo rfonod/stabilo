@@ -177,6 +177,29 @@ def is_box_rotated(box: np.ndarray, tolerance: float = 1e-3) -> bool:
     return False
 
 
+def clip_polygon(points: np.ndarray, lower: float, upper: float) -> np.ndarray:
+    """
+    Clip a polygon of shape (N, 2) to the square [lower, upper] x [lower, upper] (Sutherland-Hodgman).
+    Returns the clipped vertices, shape (M, 2), with M = 0 when the polygon lies wholly outside.
+    """
+    points = np.asarray(points, dtype=np.float64).reshape(-1, 2)
+    for axis in (0, 1):
+        for bound, is_inside in ((lower, np.greater_equal), (upper, np.less_equal)):
+            clipped = []
+            prev = points[-1] if len(points) else None
+            for cur in points:
+                cur_inside, prev_inside = is_inside(cur[axis], bound), is_inside(prev[axis], bound)
+                if cur_inside != prev_inside:
+                    crossing = prev + (bound - prev[axis]) / (cur[axis] - prev[axis]) * (cur - prev)
+                    crossing[axis] = bound
+                    clipped.append(crossing)
+                if cur_inside:
+                    clipped.append(cur)
+                prev = cur
+            points = np.array(clipped, dtype=np.float64).reshape(-1, 2)
+    return points
+
+
 def detect_delimiter(filepath: str, lines_to_check: int = 5) -> str:
     """
     Detect the delimiter of a CSV file by reading a few lines
