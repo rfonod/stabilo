@@ -319,3 +319,22 @@ def test_dl_resolution_warning_skipped_for_classical(caplog):
         stab._warn_dl_resolution()
 
     assert caplog.text == ''
+
+
+@pytest.mark.parametrize('detector_name', ['disk', 'xfeat', 'loftr'])
+def test_dl_resolution_suggestion_silences_the_warning(caplog, detector_name):
+    """Following the suggested downsample_ratio must not re-trigger the warning."""
+    stab = Stabilizer(mask_use=False)
+    stab.detector_name = detector_name
+    stab.h, stab.w = 2160, 3840
+    stab.downsample_ratio = 1.0
+
+    with caplog.at_level('WARNING'):
+        stab._warn_dl_resolution()
+    suggested = float(caplog.text.split('downsample_ratio <= ')[1].split('.\n')[0].rstrip('.'))
+    caplog.clear()
+    stab.downsample_ratio = suggested
+    with caplog.at_level('WARNING'):
+        stab._warn_dl_resolution()
+
+    assert caplog.text == ''

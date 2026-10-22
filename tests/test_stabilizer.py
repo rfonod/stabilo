@@ -157,6 +157,23 @@ def test_benchmark_identity_fallback_is_a_fresh_array(images):
     np.testing.assert_allclose(collected[1], np.eye(3))
 
 
+def test_rsift_featureless_frame_falls_back(images):
+    """RootSIFT on a frame with no keypoints must reach the fallback, not divide None."""
+    _, ref_frame = images
+    stab = Stabilizer(detector_name='rsift', benchmark=True, mask_use=False, downsample_ratio=1.0)
+    stab.set_ref_frame(ref_frame)
+    stab.stabilize(np.zeros_like(ref_frame))
+
+    np.testing.assert_allclose(stab.get_cur_trans_matrix(), np.eye(3))
+
+
+def test_distance_filter_without_matches_returns_empty():
+    stab = Stabilizer(filter_type='distance', mask_use=False)
+    empty = np.empty((0, 32), dtype=np.uint8)
+
+    assert stab.get_matches(empty, empty) == []
+
+
 @pytest.mark.parametrize('ransac_method', sorted(Stabilizer.VALID_AFFINE_RANSAC_METHODS))
 def test_affine_stabilization_end_to_end(images, ransac_method):
     cur_frame, ref_frame = images

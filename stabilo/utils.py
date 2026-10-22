@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 # Author: Robert Fonod (robert.fonod@ieee.org)
 
+import functools
 import logging
 import os
 import sys
@@ -40,6 +41,7 @@ def timer(profiling: bool = False):
     """
 
     def decorator(func):
+        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             if not profiling:
                 return func(*args, **kwargs)

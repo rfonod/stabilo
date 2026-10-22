@@ -17,8 +17,8 @@
 #
 # Only the keys present in this file are configurable. Every key can also be
 # passed directly to Stabilizer(...) as a keyword argument. Each parameter is
-# documented in more detail in docs/usage.md and in the stabilo/stabilo.py
-# module docstring.
+# documented in more detail in docs/usage.md and in the Stabilizer class
+# docstring in stabilo/stabilo.py.
 # =============================================================================
 
 
