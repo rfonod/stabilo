@@ -114,7 +114,7 @@ Three matchers are available: `bf` (brute force) and `flann` work with every det
 - **Acceleration**: OpenCV CUDA for the classical pipeline (`--gpu`, see [`docs/cuda.md`](docs/cuda.md)) and CUDA/MPS/CPU for the learned models (`--device mps`).
 - **Visualization**: live or recorded side-by-side rendering of matches, inliers, masks, and box trajectories (`--viz`, `--save-viz`, `--no-lines`, `--tail-length 60`). See [Visualisation mode](docs/usage.md#12-visualisation-mode).
 - **Benchmarking**: `benchmark=True` falls back to the identity matrix and silences warnings for clean batch sweeps; [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 wraps this into a ground-truth-free evaluation.
-- **Threshold analysis**: [`scripts/find_threshold_models.py`](scripts/find_threshold_models.py) fits the `max_features` to detector-threshold models used by BRISK, KAZE, and AKAZE, so detectors can be compared at equal keypoint budgets.
+- **Threshold analysis**: [`scripts/find_threshold_models.py`](scripts/find_threshold_models.py) fits how the average keypoint count of BRISK, KAZE, and AKAZE varies with their detection threshold.
 
 </details>
 
@@ -276,7 +276,7 @@ If you use **Stabilo** in your research, software, or product, please cite the f
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.4.4},
+      version = {1.4.5},
       year = {2026}
     }
     ```

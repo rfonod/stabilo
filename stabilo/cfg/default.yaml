@@ -41,7 +41,7 @@
 #     Lower 'downsample_ratio' for large inputs; 'loftr' scales quadratically with
 #     the pixel count. A warning is emitted when the frame size looks risky.
 detector_name: 'orb'  # ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze', 'xfeat', 'disk', 'dedode', 'keynet', 'loftr']
-max_features: 2000  # Max. keypoints detected in the current frame; (0, inf)
+max_features: 2000  # Max. keypoints kept in the current frame, the strongest by response; (0, inf)
 ref_multiplier: 2.0  # Reference frame detects ref_multiplier x max_features keypoints; [1.0, inf)
 
 # -----------------------------------------------------------------------------
@@ -117,14 +117,15 @@ device: 'auto'  # Torch device (learning-based detectors/matchers only); ['auto'
 # -----------------------------------------------------------------------------
 # Detector-specific settings
 # -----------------------------------------------------------------------------
-# Classical. BRISK/KAZE/AKAZE take a response threshold rather than a keypoint
-# count; stabilo derives it from max_features via a pre-fitted regression model
-# and only falls back to the values below when no model file is available.
+# Classical. BRISK/KAZE/AKAZE detect every keypoint whose response exceeds the
+# threshold below, then keep the max_features strongest (ref_multiplier x
+# max_features in the reference frame), as ORB and SIFT do. The defaults are
+# OpenCV's. Lower a threshold if a frame yields fewer keypoints than max_features.
 sift_enable_precise_upscale: false  # SIFT/RSIFT: precise sub-pixel upscaling at octave -1; [true, false]
 rsift_eps: 0.00000001  # RSIFT: L1-normalization epsilon (1e-8); (0.0, inf)
-brisk_threshold: 130  # BRISK: fallback threshold; (0, 255]
-kaze_threshold: 0.01  # KAZE: fallback threshold; (0.0, inf)
-akaze_threshold: 0.01  # AKAZE: fallback threshold; (0.0, inf)
+brisk_threshold: 30  # BRISK: AGAST detection threshold; (0, 255]
+kaze_threshold: 0.001  # KAZE: detector response threshold; (0.0, inf)
+akaze_threshold: 0.001  # AKAZE: detector response threshold; (0.0, inf)
 
 # Learning-based (kornia). Weights are downloaded on first use and cached by torch.
 # The DeDoDe 'G' descriptor is backed by a DINOv2 ViT-L (a 1.2 GB extra download and

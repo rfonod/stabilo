@@ -204,23 +204,43 @@ class _KeyNetDetector(_SparseDLDetector):
         return xy, scores, descs[0].cpu().numpy()
 
 
+def pad_to_multiple(tensor: torch.Tensor, multiple: int) -> torch.Tensor:
+    """
+    Zero-pad a (N, C, H, W) tensor at the bottom and right so that H and W are multiples of `multiple`.
+    Pixel coordinates are unchanged, since the origin stays at the top-left corner.
+    """
+    pad_h, pad_w = -tensor.shape[-2] % multiple, -tensor.shape[-1] % multiple
+    if pad_h == 0 and pad_w == 0:
+        return tensor
+    return torch.nn.functional.pad(tensor, (0, pad_w, 0, pad_h))
+
+
 class _LoFTRMatcher:
     """
     Detector-free LoFTR wrapper producing matched point pairs for an image pair.
+
+    LoFTR matches on a coarse grid of stride 8 and maps grid cells back to pixels with the ratio of
+    the input to the coarse size, which is not 8 when a side is not a multiple of 8. The inputs are
+    therefore padded to a multiple of 8, and matches falling in the padding are dropped.
     """
+
+    STRIDE = 8
 
     def __init__(self, model, device):
         self.model = model.eval().to(device)
         self.device = device
 
     def match(self, ref_tensor, cur_tensor):
+        (ref_h, ref_w), (cur_h, cur_w) = ref_tensor.shape[-2:], cur_tensor.shape[-2:]
+        image0 = pad_to_multiple(ref_tensor.to(self.device), self.STRIDE)
+        image1 = pad_to_multiple(cur_tensor.to(self.device), self.STRIDE)
         with torch.inference_mode():
-            out = self.model({'image0': ref_tensor.to(self.device), 'image1': cur_tensor.to(self.device)})
-        return (
-            out['keypoints0'].cpu().numpy(),
-            out['keypoints1'].cpu().numpy(),
-            out['confidence'].cpu().numpy(),
-        )
+            out = self.model({'image0': image0, 'image1': image1})
+        ref_xy = out['keypoints0'].cpu().numpy()
+        cur_xy = out['keypoints1'].cpu().numpy()
+        conf = out['confidence'].cpu().numpy()
+        keep = (ref_xy[:, 0] < ref_w) & (ref_xy[:, 1] < ref_h) & (cur_xy[:, 0] < cur_w) & (cur_xy[:, 1] < cur_h)
+        return ref_xy[keep], cur_xy[keep], conf[keep]
 
 
 class _LightGlueMatcher:

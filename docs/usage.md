@@ -299,7 +299,7 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `transformation_type` | `'projective'` | `projective`, `affine` | Geometric model |
 | `clahe` | `false` | `true`, `false` | Apply CLAHE contrast enhancement |
 | `downsample_ratio` | `0.5` | `(0, 1]` | Resize factor before feature extraction |
-| `max_features` | `2000` | `> 0` (int) | Maximum keypoints to detect in current frame |
+| `max_features` | `2000` | `> 0` (int) | Maximum keypoints kept in the current frame, the strongest by response |
 | `ref_multiplier` | `2.0` | `>= 1.0` | Scale factor for keypoints in reference frame (`ref_multiplier x max_features`) |
 | `sift_enable_precise_upscale` | `false` | `true`, `false` | SIFT/rSIFT only: enable precise sub-pixel upscaling at octave -1 |
 | `rsift_eps` | `1e-8` | `> 0` | RootSIFT (`rsift`) L1-normalization epsilon |
@@ -310,9 +310,9 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `ransac_threshold_space` | `'full'` | `full`, `processed` | Pixels the threshold is measured in: full-resolution, or the downsampled image (see section 11) |
 | `ransac_max_iter` | `5000` | `> 0` (int) | Maximum RANSAC iterations |
 | `ransac_confidence` | `0.999999` | `(0, 1]` | Required confidence level |
-| `brisk_threshold` | `130` | `(0, 255]` | BRISK detector threshold (fallback) |
-| `kaze_threshold` | `0.01` | `> 0` | KAZE detector threshold (fallback) |
-| `akaze_threshold` | `0.01` | `> 0` | AKAZE detector threshold (fallback) |
+| `brisk_threshold` | `30` | `(0, 255]` | BRISK detection threshold (AGAST score) |
+| `kaze_threshold` | `0.001` | `> 0` | KAZE detection threshold (detector response) |
+| `akaze_threshold` | `0.001` | `> 0` | AKAZE detection threshold (detector response) |
 | `gpu` | `false` | `true`, `false` | Use CUDA GPU acceleration for detection/matching/warping; requires a CUDA-enabled OpenCV build, see [`docs/cuda.md`](cuda.md) |
 | `gpu_device_id` | `0` | `>= 0` (int) | CUDA device index to use when `gpu` is true |
 | `device` | `'auto'` | `auto`, `cpu`, `cuda`, `mps` | Torch device for learning-based detectors/matchers only (`auto` picks cuda > mps > cpu) |
@@ -338,11 +338,11 @@ All parameters can be passed as keyword arguments to `Stabilizer(...)` or set vi
 | `orb` | Binary | Fast; uses Hamming distance. Default. |
 | `sift` | Float | Scale and rotation invariant; uses L2 distance. |
 | `rsift` | Float | RootSIFT variant of SIFT with improved matching quality. |
-| `brisk` | Binary | Threshold auto-derived from `max_features` via a pre-fitted model; falls back to `brisk_threshold`. |
-| `kaze` | Float | Non-linear scale-space detector; threshold auto-derived similarly. |
-| `akaze` | Binary | Accelerated KAZE; threshold auto-derived similarly. |
+| `brisk` | Binary | Detection threshold `brisk_threshold`. |
+| `kaze` | Float | Non-linear scale-space detector; detection threshold `kaze_threshold`. |
+| `akaze` | Binary | Accelerated KAZE; detection threshold `akaze_threshold`. |
 
-For BRISK, KAZE, and AKAZE, Stabilo ships pre-fitted linear regression models that translate `max_features` into the appropriate detector threshold. These models are stored under `stabilo/thresholds/models/` and are selected based on `mask_use` and `clahe` settings. If no model is available the fallback thresholds (`brisk_threshold`, etc.) are used.
+Every classical detector keeps at most `max_features` keypoints in the current frame and `ref_multiplier x max_features` in the reference frame, the strongest by detector response, counted in the processed (downsampled) image. ORB and SIFT do this natively. BRISK, KAZE, and AKAZE detect every keypoint whose response exceeds their threshold (`brisk_threshold`, `kaze_threshold`, `akaze_threshold`, OpenCV's defaults) and stabilo keeps the strongest. The cap therefore holds at any resolution and `downsample_ratio`, but it is a maximum, not a target: a small or weakly textured frame can yield fewer keypoints, in which case lowering the threshold yields more. Before v1.4.5, BRISK, KAZE, and AKAZE converted `max_features` into a threshold with linear models fitted at native resolution, which ignored `downsample_ratio` and, for large feature counts, went negative and kept every keypoint.
 
 **Learning-based detectors** ([kornia](https://kornia.readthedocs.io/), core dependency; pretrained weights download on first use and run on the `device`):
 
@@ -354,7 +354,7 @@ For BRISK, KAZE, and AKAZE, Stabilo ships pre-fitted linear regression models th
 | `keynet` | Float (128-d) | ✅ | KeyNet detector + HardNet descriptor, with an OriNet orientation estimator. The only rotation-invariant learned option. Works with `bf`/`flann`/`lightglue`. |
 | `loftr` | Detector-free | ❌ | Semi-dense image-pair matching; produces correspondences directly, so `matcher_name` and `filter_type` are ignored. Weights via `loftr_weights`; filter correspondences with `loftr_confidence`. |
 
-Learning-based detectors receive the same CLAHE, downsampling, and exclusion-mask handling as the classical ones: masks are applied by discarding keypoints (or LoFTR correspondences) that fall in excluded regions, and keypoint coordinates are rescaled back to full resolution after downsampled detection. `max_features` caps the number of detected keypoints. The `brisk_threshold`/`kaze_threshold`/`akaze_threshold` models do not apply. Select the compute device with `device` (`auto` picks cuda > mps > cpu). Note that `gpu=True` (OpenCV CUDA) is incompatible with learning-based detectors; use `device='cuda'` instead.
+Learning-based detectors receive the same CLAHE, downsampling, and exclusion-mask handling as the classical ones: masks are applied by discarding keypoints (or LoFTR correspondences) that fall in excluded regions, and keypoint coordinates are rescaled back to full resolution after downsampled detection. `max_features` caps the number of detected keypoints; the `brisk_threshold`/`kaze_threshold`/`akaze_threshold` options do not apply. LoFTR matches on a coarse grid of stride 8, so its input is zero-padded at the bottom and right to a multiple of 8 and correspondences falling in the padding are dropped. Before v1.4.5 it was not padded, and a processed frame whose sides are not multiples of 8 (for example 691×389, a 4K frame at `downsample_ratio: 0.18`) was registered with a systematic error that grows toward the far edges, several to tens of pixels at 4K. Select the compute device with `device` (`auto` picks cuda > mps > cpu). Note that `gpu=True` (OpenCV CUDA) is incompatible with learning-based detectors; use `device='cuda'` instead.
 
 Pretrained weights are downloaded once, on first use, into torch's hub cache (`~/.cache/torch/hub/checkpoints` on Linux and macOS, `%USERPROFILE%\.cache\torch\hub\checkpoints` on Windows). Set the `TORCH_HOME` environment variable to relocate it. Stabilo logs whether the weights were downloaded or reused from that cache, so a run that stalls on a first-use download is easy to recognise.
 

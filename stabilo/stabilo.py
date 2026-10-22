@@ -74,6 +74,26 @@ cfg = load_config(ROOT / "cfg" / "default.yaml", logger)
 PROFILING = bool(int(os.environ.get("STABILO_PROFILE", "0")))
 
 
+class _StrongestKeypoints:
+    """
+    Threshold-based OpenCV detector (BRISK, KAZE, AKAZE) capped to the n keypoints with the strongest
+    response, as ORB and SIFT cap theirs. The threshold sets which responses count as keypoints, the
+    cap how many are kept, so the cap holds at any image size.
+    """
+
+    def __init__(self, detector, n: int):
+        self.detector = detector
+        self.n = n
+
+    def detectAndCompute(self, image: np.ndarray, mask: np.ndarray = None) -> tuple:
+        kpts, desc = self.detector.detectAndCompute(image, mask)
+        if len(kpts) > self.n:
+            response = np.fromiter((kpt.response for kpt in kpts), dtype=np.float64, count=len(kpts))
+            keep = np.sort(np.argsort(-response, kind='stable')[: self.n])
+            kpts, desc = tuple(kpts[i] for i in keep), desc[keep]
+        return kpts, desc
+
+
 class Stabilizer:
     """
     This class implements a video stabilizer. It uses feature matching to find the transformation
@@ -151,7 +171,7 @@ class Stabilizer:
         - transformation_type: str - transformation for stabilization (projective, affine)
         - clahe: bool - use CLAHE for contrast enhancement
         - downsample_ratio: float - down-sampling ratio for the frames (e.g., 0.5 for half the size)
-        - max_features: int - max number of features to detect (for BRISK, KAZE, and AKAZE this is an approximation)
+        - max_features: int - max number of features kept in the current frame, the strongest by response
         - ref_multiplier: float - multiplier for max features in reference frame (ref_multiplier x max_features)
         - sift_enable_precise_upscale: bool - enable SIFT precise sub-pixel upscaling at octave -1 (SIFT/RSIFT only; default False)
         - rsift_eps: float - epsilon added to the L1 norm during RootSIFT (rsift) descriptor normalization (default 1e-8)
@@ -167,9 +187,9 @@ class Stabilizer:
           keeps the threshold fixed relative to the keypoint localization noise as downsample_ratio varies)
         - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
         - ransac_confidence: float - confidence for RANSAC (e.g., 0.999)
-        - brisk_threshold: int - threshold for BRISK detector (used only if 'max_features -> threshold' model is unavailable)
-        - kaze_threshold: float - threshold for KAZE detector (used only if 'max_features -> threshold' model is unavailable)
-        - akaze_threshold: float - threshold for AKAZE detector (used only if 'max_features -> threshold' model is unavailable)
+        - brisk_threshold: int - BRISK detection threshold (AGAST score); max_features then keeps the strongest
+        - kaze_threshold: float - KAZE detection threshold (Hessian response); max_features then keeps the strongest
+        - akaze_threshold: float - AKAZE detection threshold (Hessian response); max_features then keeps the strongest
         - gpu: bool - use CUDA GPU acceleration for detection/matching/warping; only detector_name in
           VALID_GPU_DETECTORS is supported (see docs/cuda.md)
         - gpu_device_id: int - CUDA device index to use when gpu=True (default 0)
@@ -319,64 +339,29 @@ class Stabilizer:
         """
         Create BRISK detectors and descriptor extractors.
         """
-        threshold_cur, threshold_ref = self._get_thresholds()
-        return (
-            cv2.cuda.BRISK.create(thresh=round(threshold_cur))
-            if self.gpu
-            else cv2.BRISK_create(thresh=round(threshold_cur)),
-            cv2.cuda.BRISK.create(thresh=round(threshold_ref))
-            if self.gpu
-            else cv2.BRISK_create(thresh=round(threshold_ref)),
-        )
+        return self._strongest_pair(lambda: cv2.BRISK_create(thresh=round(self.brisk_threshold)))
 
     def _create_kaze_detectors(self):
         """
         Create KAZE detectors and descriptor extractors.
         """
-        threshold_cur, threshold_ref = self._get_thresholds()
-        return (
-            cv2.cuda.KAZE_create(threshold=threshold_cur) if self.gpu else cv2.KAZE_create(threshold=threshold_cur),
-            cv2.cuda.KAZE_create(threshold=threshold_ref) if self.gpu else cv2.KAZE_create(threshold=threshold_ref),
-        )
+        return self._strongest_pair(lambda: cv2.KAZE_create(threshold=self.kaze_threshold))
 
     def _create_akaze_detectors(self):
         """
         Create AKAZE detectors and descriptor extractors.
         """
-        threshold_cur, threshold_ref = self._get_thresholds()
-        return (
-            cv2.cuda.AKAZE_create(threshold=threshold_cur) if self.gpu else cv2.AKAZE_create(threshold=threshold_cur),
-            cv2.cuda.AKAZE_create(threshold=threshold_ref) if self.gpu else cv2.AKAZE_create(threshold=threshold_ref),
-        )
+        return self._strongest_pair(lambda: cv2.AKAZE_create(threshold=self.akaze_threshold))
 
-    def _get_thresholds(self):
+    def _strongest_pair(self, create):
         """
-        Get thresholds for BRISK, KAZE, and AKAZE based on precomputed models.
+        Wrap a threshold-based detector so that the current and reference frames keep at most
+        max_features and ref_multiplier x max_features keypoints, the strongest by response.
         """
-        detector_name = self.detector_name.upper()
-        threshold_model_filepath = (
-            ROOT / 'thresholds' / 'models' / f'{detector_name}' / f'model_mask_{self.mask_use}_clahe_{self.clahe}.txt'
+        return (
+            _StrongestKeypoints(create(), self.max_features),
+            _StrongestKeypoints(create(), round(self.ref_multiplier * self.max_features)),
         )
-        if threshold_model_filepath.exists():
-            model = np.loadtxt(str(threshold_model_filepath))
-            threshold_cur = model[1] + model[0] * self.max_features
-            threshold_ref = model[1] + model[0] * self.max_features * self.ref_multiplier
-            if not self.benchmark:
-                self.logger.info(
-                    f"Using {detector_name} with threshold {threshold_ref} for the reference frame and {threshold_cur} for the current frame."
-                )
-        else:
-            threshold_cur = (
-                self.brisk_threshold
-                if detector_name == 'BRISK'
-                else self.kaze_threshold
-                if detector_name == 'KAZE'
-                else self.akaze_threshold
-            )
-            threshold_ref = threshold_cur
-            if not self.benchmark:
-                self.logger.warning(f"No threshold analysis for {detector_name}. Using default threshold.")
-        return threshold_cur, threshold_ref
 
     def _get_norm_type(self):
         """

@@ -79,7 +79,7 @@ stabilo = "stabilo.cli:main"
 
 [tool.setuptools]
 packages = { find = { where = ["."], include = ["stabilo", "stabilo.*"] } }
-package-data = { "stabilo" = ["**/*.yaml", "**/*.txt"] }
+package-data = { "stabilo" = ["**/*.yaml"] }
 
 [tool.setuptools.dynamic]
 version = { attr = "stabilo.__version__" }
