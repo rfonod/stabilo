@@ -893,6 +893,50 @@ def test_missing_opencv_binding_raises_clear_error(monkeypatch, detector_name):
         Stabilizer(detector_name=detector_name)
 
 
+THRESHOLD_DETECTORS = {'brisk': cv2.BRISK_create, 'kaze': cv2.KAZE_create, 'akaze': cv2.AKAZE_create}
+
+
+@pytest.mark.parametrize('detector_name', sorted(THRESHOLD_DETECTORS))
+@pytest.mark.parametrize('downsample_ratio', [1.0, 0.5])
+def test_threshold_detectors_keep_at_most_max_features(images, detector_name, downsample_ratio):
+    """BRISK/KAZE/AKAZE are capped at max_features (current) and ref_multiplier x max_features (reference)."""
+    _, ref_frame = images
+    stab = Stabilizer(
+        detector_name=detector_name, max_features=100, ref_multiplier=2.0, downsample_ratio=downsample_ratio
+    )
+    stab.set_ref_frame(ref_frame)
+    stab.stabilize(ref_frame)
+    assert len(stab.ref_kpts) == 200
+    assert len(stab.cur_kpts) == 100
+    assert stab.ref_desc.shape[0] == 200 and stab.cur_desc.shape[0] == 100
+
+
+@pytest.mark.parametrize('detector_name', sorted(THRESHOLD_DETECTORS))
+def test_threshold_detectors_keep_the_strongest_keypoints(images, detector_name):
+    """The kept keypoints and descriptors are the uncapped detector's strongest, unchanged."""
+    _, ref_frame = images
+    gray = cv2.cvtColor(ref_frame, cv2.COLOR_BGR2GRAY)
+    all_kpts, all_desc = THRESHOLD_DETECTORS[detector_name]().detectAndCompute(gray, None)
+    stab = Stabilizer(detector_name=detector_name, max_features=150, downsample_ratio=1.0, clahe=False)
+    kpts, desc, _ = stab.get_features_and_descriptors(ref_frame)
+    response = np.array([kpt.response for kpt in all_kpts])
+    kept = np.sort(np.argsort(-response, kind='stable')[:150])
+    assert [kpt.pt for kpt in kpts] == [all_kpts[i].pt for i in kept]
+    np.testing.assert_array_equal(desc, all_desc[kept])
+    assert min(kpt.response for kpt in kpts) >= np.delete(response, kept).max()
+
+
+@pytest.mark.parametrize('detector_name', sorted(THRESHOLD_DETECTORS))
+def test_threshold_detectors_keep_everything_below_the_cap(images, detector_name):
+    """A cap above the detected count keeps every keypoint, at the configured threshold."""
+    _, ref_frame = images
+    gray = cv2.cvtColor(ref_frame, cv2.COLOR_BGR2GRAY)
+    detected = len(THRESHOLD_DETECTORS[detector_name]().detect(gray, None))
+    stab = Stabilizer(detector_name=detector_name, max_features=10 * detected, downsample_ratio=1.0, clahe=False)
+    kpts, _, _ = stab.get_features_and_descriptors(ref_frame)
+    assert 0.95 * detected <= len(kpts) <= detected
+
+
 @requires_cuda
 def test_gpu_warp_cur_frame(images):
     cur_frame, ref_frame = images
