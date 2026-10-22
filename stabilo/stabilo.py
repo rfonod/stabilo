@@ -50,6 +50,7 @@ Usage:
 4. Access stabilized frames, bounding boxes, and transformation matrices using specific methods.
 """
 
+import math
 import os
 import sys
 from pathlib import Path
@@ -559,7 +560,7 @@ class Stabilizer:
         pixels = width * height
         if pixels <= budget:
             return
-        suggested = min(1.0, (budget / (self.w * self.h)) ** 0.5)
+        suggested = min(1.0, math.floor(100 * (budget / (self.w * self.h)) ** 0.5) / 100)
         scaling = " and scales quadratically with the pixel count" if self.detector_name == 'loftr' else ""
         self.logger.warning(
             f"'{self.detector_name}' will process {width}x{height} ({pixels / 1e6:.2f} MP) frames at "
@@ -631,7 +632,7 @@ class Stabilizer:
             if self.gpu:
                 self.gpu_stream.waitForCompletion()
 
-        if self.detector_name == 'rsift':
+        if self.detector_name == 'rsift' and desc is not None:
             desc /= desc.sum(axis=1, keepdims=True) + self.rsift_eps
             desc = np.sqrt(desc)
 
@@ -766,8 +767,8 @@ class Stabilizer:
                     matches = self.matcher.matchConvert(gpu_matches)
                 else:
                     matches = self.matcher.match(desc1, desc2, None)
-                if self.filter_type == 'none':
-                    good_matches = matches
+                if self.filter_type == 'none' or not matches:
+                    good_matches = list(matches)
                 else:
                     matches = sorted(matches, key=lambda x: x.distance)
                     min_dist, max_dist = matches[0].distance, matches[-1].distance
