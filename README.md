@@ -1,6 +1,6 @@
 # Stabilo
 
-[![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![PyPI - Total Downloads](https://img.shields.io/pepy/dt/stabilo?label=total%20downloads)](https://pepy.tech/project/stabilo) [![CI](https://github.com/rfonod/stabilo/actions/workflows/ci.yml/badge.svg)](https://github.com/rfonod/stabilo/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11--3.13-blue)](https://www.python.org/) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![GitHub Issues](https://img.shields.io/github/issues/rfonod/stabilo)](https://github.com/rfonod/stabilo/issues) [![Open Access](https://img.shields.io/badge/Journal-10.1016%2Fj.trc.2025.105205-blue)](https://doi.org/10.1016/j.trc.2025.105205) [![arXiv](https://img.shields.io/badge/arXiv-2411.02136-b31b1b.svg)](https://arxiv.org/abs/2411.02136) [![Archived Code](https://img.shields.io/badge/Zenodo-Software%20Archive-blue)](https://zenodo.org/doi/10.5281/zenodo.12117092) [![YouTube](https://img.shields.io/badge/YouTube-Video-red?logo=youtube&logoColor=red)](https://youtu.be/BGEZCEe6yHw)
+[![GitHub Release](https://img.shields.io/github/v/release/rfonod/stabilo?include_prereleases)](https://github.com/rfonod/stabilo/releases) [![PyPI Version](https://img.shields.io/pypi/v/stabilo)](https://pypi.org/project/stabilo/) [![PyPI - Total Downloads](https://img.shields.io/pepy/dt/stabilo?label=total%20downloads)](https://pepy.tech/project/stabilo) [![CI](https://github.com/rfonod/stabilo/actions/workflows/ci.yml/badge.svg)](https://github.com/rfonod/stabilo/actions/workflows/ci.yml) [![Python](https://img.shields.io/badge/python-3.11--3.13-blue)](https://www.python.org/) [![License](https://img.shields.io/github/license/rfonod/stabilo)](https://github.com/rfonod/stabilo/blob/main/LICENSE) [![GitHub Issues](https://img.shields.io/github/issues/rfonod/stabilo)](https://github.com/rfonod/stabilo/issues) [![Open Access](https://img.shields.io/badge/Journal-10.1016%2Fj.trc.2025.105205-blue)](https://doi.org/10.1016/j.trc.2025.105205) [![arXiv](https://img.shields.io/badge/arXiv-2411.02136-b31b1b.svg)](https://arxiv.org/abs/2411.02136) [![Archived Code](https://img.shields.io/badge/Zenodo-Software%20Archive-blue)](https://zenodo.org/doi/10.5281/zenodo.12117092) [![Docs](https://img.shields.io/badge/docs-rfonod.github.io%2Fstabilo-blue)](https://rfonod.github.io/stabilo/) [![YouTube](https://img.shields.io/badge/YouTube-Video-red?logo=youtube&logoColor=red)](https://youtu.be/BGEZCEe6yHw)
 
 **Stabilo** stabilizes video frames and tracked object trajectories against a chosen reference frame, using robust homography or affine registration with optional exclusion masks for dynamic regions. It is the registration engine behind [Geo-trax](https://github.com/rfonod/geo-trax) 🚀 and is tuned with [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯.
 
@@ -79,6 +79,8 @@ Both write into the git-ignored `data/out/`, so you can diff your results agains
 
 Stabilo ships classical OpenCV detectors and learning-based detectors/matchers from [kornia](https://kornia.readthedocs.io/) as core functionality. The learning-based options download pretrained weights on first use (see [Installation](#installation)) and benefit from a GPU (`--device cuda` or `--device mps`).
 
+<!-- --8<-- [start:detector-table] -->
+
 | `detector_name` | Type | Descriptor | Compatible matchers | Speed (CPU) | Rotation invariant | Memory | Acceleration |
 | :--- | :--- | :--- | :--- | :--- | :---: | :--- | :--- |
 | `orb` (default) | classical, binary | 256-bit | `bf`, `flann` | very fast | ✅ | low | OpenCV CUDA (`--gpu`) |
@@ -93,7 +95,9 @@ Stabilo ships classical OpenCV detectors and learning-based detectors/matchers f
 | `keynet` | learned det. + HardNet desc. | 128-d float | `bf`, `flann`, `lightglue` | medium | ✅ | high | torch (`--device`) |
 | `loftr` | learned, detector-free | dense matching | built-in (matcher ignored) | slow | ❌ | very high | torch (`--device`) |
 
-Three matchers are available: `bf` (brute force) and `flann` work with every detector, while the learned `lightglue` pairs with `disk`, `dedode`, and `keynet`. `loftr` is detector-free: it matches an image pair directly, so `matcher_name` and `filter_type` are ignored. Full details in [docs/usage.md](docs/usage.md#9-feature-detectors).
+<!-- --8<-- [end:detector-table] -->
+
+Three matchers are available: `bf` (brute force) and `flann` work with every detector, while the learned `lightglue` pairs with `disk`, `dedode`, and `keynet`. `loftr` is detector-free: it matches an image pair directly, so `filter_type` and the `bf`/`flann` choice of `matcher_name` are ignored (`lightglue` is rejected). Full details in [docs/usage.md](docs/usage.md#9-feature-detectors).
 
 > [!IMPORTANT]
 > **Two caveats apply to the learning-based detectors.** They are worth understanding before you pick one.
@@ -242,11 +246,15 @@ ref_point = stabilizer.get_cur_trans_matrix() @ np.array([x, y, 1])
 
 ## Documentation
 
+The full documentation, including the CLI and API references, is published at **[rfonod.github.io/stabilo](https://rfonod.github.io/stabilo/)**. Its sources live in this repository:
+
 - [`docs/usage.md`](docs/usage.md): detailed usage guide covering the workflow, mask formats, every configuration key, the detector and matcher reference, RANSAC methods, visualization, benchmarking, and the CLI.
 - [`docs/cuda.md`](docs/cuda.md): building OpenCV with CUDA and enabling `--gpu`.
 - [`scripts/README.md`](scripts/README.md): the threshold-analysis research tool.
 
 ## Citing This Work
+
+<!-- --8<-- [start:citation] -->
 
 If you use **Stabilo** in your research, software, or product, please cite the following resources appropriately:
 
@@ -272,14 +280,16 @@ If you use **Stabilo** in your research, software, or product, please cite the f
     @software{fonod2026stabilo,
       author = {Fonod, Robert},
       license = {MIT},
-      month = sep,
+      month = oct,
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.4.5},
+      version = {1.4.6},
       year = {2026}
     }
     ```
+
+<!-- --8<-- [end:citation] -->
 
 ## Contributing
 

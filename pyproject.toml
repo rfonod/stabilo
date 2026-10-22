@@ -10,6 +10,7 @@
 #   pip install -e .                                          # core (editable)
 #   pip install -e '.[dev]'                                   # core + dev
 #   pip install -e '.[extras]'                                # core + extras
+#   pip install -e '.[docs]'                                  # core + docs (MkDocs site)
 #   uv venv --python 3.11 && uv pip install -e .              # core (uv; faster)
 #   uv venv --python 3.11 && uv pip install -e '.[dev]'       # core + dev (uv)
 #   uv venv --python 3.11 && uv pip install -e '.[extras]'    # core + extras (uv)
@@ -73,6 +74,12 @@ dev = [
     "ruff>=0.11.0",
     "matplotlib>=3.5.0"
 ]
+docs = [
+    "mkdocs>=1.6,<2",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.0",
+    "mkdocstrings[python]>=0.26"
+]
 
 [project.scripts]
 stabilo = "stabilo.cli:main"
@@ -86,6 +93,7 @@ version = { attr = "stabilo.__version__" }
 
 [project.urls]
 Homepage = "https://github.com/rfonod/stabilo/"
+Documentation = "https://rfonod.github.io/stabilo/"
 Repository = "https://github.com/rfonod/stabilo/"
 Changelog = "https://github.com/rfonod/stabilo/releases"
 Issues = "https://github.com/rfonod/stabilo/issues/"

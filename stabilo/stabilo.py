@@ -97,10 +97,11 @@ class _StrongestKeypoints:
 
 class Stabilizer:
     """
-    This class implements a video stabilizer. It uses feature matching to find the transformation
-    between the reference frame and the current frame, allowing stabilization of subsequent frames.
-    The transformation matrix can be used to transform the current frame to the reference frame or
-    to transform points from the current frame to the reference frame.
+    Stabilize video frames, or the bounding boxes of objects in them, against a reference frame.
+
+    Features are detected in the reference frame once and in every current frame, matched, and
+    passed to a robust RANSAC-family estimator. The resulting matrix maps the current frame onto the
+    reference frame; use it to warp the frame, to transform its boxes, or read it directly.
     """
 
     VALID_DETECTORS = ['orb', 'sift', 'rsift', 'brisk', 'kaze', 'akaze', 'xfeat', 'disk', 'dedode', 'keynet', 'loftr']
@@ -163,48 +164,67 @@ class Stabilizer:
 
     def __init__(self, **kwargs):
         """
-        Initialize the Stabilizer with user-provided or default configurations.
+        Create a stabilizer and build its detector, matcher, and estimator.
 
-        Arguments:
-        - detector_name: str - feature detector to use (orb, sift, rsift, brisk, kaze, akaze, xfeat, disk, dedode, keynet, loftr)
-        - matcher_name: str - feature matcher to use (bf, flann, lightglue)
-        - filter_type: str - filter type for the feature matcher (none, ratio, distance)
-        - transformation_type: str - transformation for stabilization (projective, affine)
-        - clahe: bool - use CLAHE for contrast enhancement
-        - downsample_ratio: float - down-sampling ratio for the frames (e.g., 0.5 for half the size)
-        - max_features: int - max number of features kept in the current frame, the strongest by response
-        - ref_multiplier: float - multiplier for max features in reference frame (ref_multiplier x max_features)
-        - sift_enable_precise_upscale: bool - enable SIFT precise sub-pixel upscaling at octave -1 (SIFT/RSIFT only; default False)
-        - rsift_eps: float - epsilon added to the L1 norm during RootSIFT (rsift) descriptor normalization (default 1e-8)
-        - mask_use: bool - use mask for feature detection
-        - filter_ratio: float - filtering ratio; Lowe's ratio for 'ratio' filter, distance threshold ratio for 'distance' filter
-        - match_query_frame: str - which descriptors are the knnMatch query: 'reference' (default) or 'current'
-        - ransac_method: int - method for RANSAC algorithm (see above for options); with
-          transformation_type='affine' only cv2.LMEDS (4) and cv2.RANSAC (8) are supported
-        - ransac_epipolar_threshold: float - reprojection-error threshold for RANSAC (e.g., 1.0), in the
-          pixel units named by ransac_threshold_space
-        - ransac_threshold_space: str - coordinate system ransac_epipolar_threshold is expressed in:
-          'full' (full-resolution pixels, the default) or 'processed' (downsampled-image pixels, which
-          keeps the threshold fixed relative to the keypoint localization noise as downsample_ratio varies)
-        - ransac_max_iter: int - max iterations for RANSAC (e.g., 2000)
-        - ransac_confidence: float - confidence for RANSAC (e.g., 0.999)
-        - brisk_threshold: int - BRISK detection threshold (AGAST score); max_features then keeps the strongest
-        - kaze_threshold: float - KAZE detection threshold (Hessian response); max_features then keeps the strongest
-        - akaze_threshold: float - AKAZE detection threshold (Hessian response); max_features then keeps the strongest
-        - gpu: bool - use CUDA GPU acceleration for detection/matching/warping; only detector_name in
-          VALID_GPU_DETECTORS is supported (see docs/cuda.md)
-        - gpu_device_id: int - CUDA device index to use when gpu=True (default 0)
-        - device: str - torch device for deep-learning detectors/matchers only (auto, cpu, cuda, mps)
-        - loftr_weights: str - LoFTR pretrained weights (outdoor, indoor)
-        - loftr_confidence: float - minimum LoFTR correspondence confidence to keep [0.0, 1.0]
-        - disk_weights: str - DISK pretrained weights (depth, epipolar)
-        - dedode_detector_weights: str - DeDoDe detector weights
-        - dedode_descriptor_weights: str - DeDoDe descriptor weights
-        - viz: bool - save some features for visualization (e.g., keypoints, descriptors, masks)
-        - benchmark: bool - different behavior for benchmarking purposes (e.g., re-use the last transformation if the current is None)
-        - min_good_match_count_warning: int - min number of good matches to trigger a warning
-        - min_inliers_match_count_warning: int - min number of inliers to trigger a warning
-        - logger: logging.Logger - optional external logger; defaults to the module logger
+        Every option is a keyword argument that defaults to its value in cfg/default.yaml, and
+        `Stabilizer.configurable_keys()` lists them. A keyword that is not one of them is ignored with
+        a warning naming the nearest valid key. Learned models download their weights on first use.
+
+        Keyword Args:
+            detector_name (str): Feature detector: 'orb', 'sift', 'rsift' (RootSIFT), 'brisk', 'kaze',
+                'akaze', or a learned one, 'xfeat', 'disk', 'dedode', 'keynet', 'loftr'.
+            max_features (int): Keypoints kept in the current frame, the strongest by response.
+            ref_multiplier (float): The reference frame keeps ref_multiplier x max_features keypoints.
+            matcher_name (str): Descriptor matcher: 'bf', 'flann', or 'lightglue' (with 'disk',
+                'dedode', or 'keynet' only). 'loftr' matches the image pair itself, so it ignores
+                'bf' and 'flann' and rejects 'lightglue'.
+            filter_type (str): Match filter: 'none', 'ratio' (Lowe's ratio test), or 'distance'.
+            filter_ratio (float): Lowe's ratio for 'ratio', or the distance-threshold ratio for
+                'distance'.
+            match_query_frame (str): Whose descriptors are the knnMatch query, 'reference' or 'current'.
+            transformation_type (str): 'projective' (3x3 homography) or 'affine' (2x3, partial affine).
+            ransac_method (int): OpenCV robust-estimation flag, a value of VALID_RANSAC_METHODS_DICT
+                (default 38, MAGSAC++). 'affine' supports only 4 (LMEDS) and 8 (RANSAC).
+            ransac_epipolar_threshold (float): Reprojection-error threshold, in the pixels named by
+                ransac_threshold_space.
+            ransac_threshold_space (str): 'full' to measure the threshold in full-resolution pixels,
+                or 'processed' to measure it in pixels of the downsampled image, which keeps it fixed
+                relative to keypoint localization noise as downsample_ratio changes.
+            ransac_max_iter (int): Maximum RANSAC iterations.
+            ransac_confidence (float): Required RANSAC confidence level.
+            mask_use (bool): Exclude the boxes passed to set_ref_frame() and stabilize() from
+                feature detection. When False the boxes are discarded.
+            mask_margin_ratio (float): Fraction by which each excluded region is grown.
+            clahe (bool): Apply CLAHE contrast enhancement before detection.
+            downsample_ratio (float): Detect on a frame resized by this factor; keypoints are scaled
+                back to full resolution. Use 1.0 for coordinate-exact work.
+            gpu (bool): OpenCV CUDA acceleration of detection, matching, and warping. Needs a
+                CUDA-enabled OpenCV and a detector in VALID_GPU_DETECTORS.
+            gpu_device_id (int): CUDA device index used when gpu is True.
+            device (str): Torch device for the learned detectors and matchers: 'auto' (cuda, then
+                mps, then cpu), 'cpu', 'cuda', or 'mps'. Independent of gpu.
+            sift_enable_precise_upscale (bool): SIFT and RootSIFT precise sub-pixel upscaling at
+                octave -1.
+            rsift_eps (float): Epsilon added to the L1 norm in RootSIFT descriptor normalization.
+            brisk_threshold (int): BRISK AGAST detection threshold.
+            kaze_threshold (float): KAZE detector response threshold.
+            akaze_threshold (float): AKAZE detector response threshold.
+            loftr_weights (str): LoFTR pretrained weights, 'outdoor' or 'indoor'.
+            loftr_confidence (float): Minimum LoFTR correspondence confidence to keep.
+            disk_weights (str): DISK pretrained weights, 'depth' or 'epipolar'.
+            dedode_detector_weights (str): DeDoDe detector weights.
+            dedode_descriptor_weights (str): DeDoDe descriptor weights.
+            viz (bool): Retain keypoints, masks, and inliers for visualization.
+            benchmark (bool): Fall back to the identity matrix instead of the last known one when
+                estimation fails, and skip the resolution warning and the update check.
+            min_good_match_count_warning (int): Warn when fewer good matches than this are found.
+            min_inliers_match_count_warning (int): Warn when fewer inliers than this are found.
+            logger (logging.Logger): Logger that receives every message, instead of stabilo's own.
+                It is not a configuration key.
+
+        Raises:
+            ValueError: If an option is out of range, or options are incompatible (for example
+                gpu=True with a learned detector, or 'affine' with an unsupported ransac_method).
         """
         self.logger = kwargs.pop('logger', None) or logger
         self._load_configuration(kwargs)
@@ -461,17 +481,33 @@ class Stabilizer:
     @timer(PROFILING)
     def set_ref_frame(self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh') -> None:
         """
-        Set the reference frame and object bounding boxes.
-        Calculate keypoints and descriptors for the reference frame.
+        Set the frame that every later frame is aligned to, and detect its features.
+
+        Call it again to change the reference. The process exits if frame is None.
+
+        Args:
+            frame: BGR image.
+            boxes: Regions to exclude from feature detection, typically moving objects, one per row
+                in box_format. Ignored when mask_use is False.
+            box_format: 'xywh', 'xywha', 'four', 'polygon', or 'circle'; see create_binary_mask().
         """
         self.process_frame(frame, boxes, box_format, is_reference=True)
 
     @timer(PROFILING)
     def stabilize(self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh') -> None:
         """
-        This method takes an un-stabilized video frame and
-        calculates a transformation matrix that can transform
-        this frame or boxes to the reference frame coordinates.
+        Estimate the transformation that maps a frame onto the reference frame.
+
+        Read the result with warp_cur_frame(), transform_cur_boxes(), or get_cur_trans_matrix().
+        When estimation fails, the last successful matrix is kept (the identity when benchmark is
+        True). The process exits if frame is None.
+
+        Args:
+            frame: BGR image to stabilize.
+            boxes: Regions to exclude from feature detection, one per row in box_format; these are
+                also the boxes that transform_cur_boxes() maps. Ignored when mask_use is False, in
+                which case transform_cur_boxes() returns None.
+            box_format: 'xywh', 'xywha', 'four', 'polygon', or 'circle'; see create_binary_mask().
         """
         success = self.process_frame(frame, boxes, box_format, is_reference=False)
         if success:
@@ -501,7 +537,9 @@ class Stabilizer:
         self, frame: np.ndarray, boxes: np.ndarray = None, box_format: str = 'xywh', is_reference: bool = False
     ) -> bool:
         """
-        Process the given frame and bounding boxes.
+        Store a frame and its boxes, build its exclusion mask, and detect its features.
+
+        Called by set_ref_frame() and stabilize(). Returns True; the process exits if frame is None.
         """
         if frame is None:
             self.logger.error(f'{"Reference" if is_reference else "Current"} frame is invalid.')
@@ -574,7 +612,13 @@ class Stabilizer:
         self, frame: np.ndarray, mask: np.ndarray = None, ref_frame: bool = False
     ) -> tuple:
         """
-        Get the features and descriptors for the given frame.
+        Detect keypoints in a frame and describe them, honouring the mask and downsample_ratio.
+
+        Returns:
+            A (keypoints, descriptors, gray_frame) tuple. Keypoints are in full-resolution
+                coordinates and gray_frame is None unless viz is True. All three are None for a
+                None frame or a failed detection, and descriptors is None when no keypoints are
+                found. 'loftr' detects nothing here: it only caches the frame for matching.
         """
         if frame is None:
             return None, None, None
@@ -731,7 +775,10 @@ class Stabilizer:
     @timer(PROFILING)
     def get_matches(self, desc1: np.ndarray, desc2: np.ndarray) -> list:
         """
-        Match the given descriptors.
+        Match two descriptor sets with the configured matcher and filter.
+
+        Returns:
+            The surviving cv2.DMatch list, with desc1 as the query; empty if either set is None.
         """
         if desc1 is None or desc2 is None:
             self.logger.warning("One of the descriptors is invalid.")
@@ -799,7 +846,10 @@ class Stabilizer:
     @timer(PROFILING)
     def calculate_transformation_matrix(self) -> None:
         """
-        Estimate the transformation matrix using the current and reference points.
+        Estimate the current-to-reference matrix from the point correspondences found by stabilize().
+
+        Needs at least four correspondences. On failure the matrix falls back to the last known one
+        (the identity when benchmark is True) and the inlier count becomes None.
         """
         if self.ref_pts is not None and self.cur_pts is not None and len(self.ref_pts) >= 4 and len(self.cur_pts) >= 4:
             try:
@@ -849,21 +899,23 @@ class Stabilizer:
     @timer(PROFILING)
     def create_binary_mask(self, boxes: np.ndarray, box_format: str) -> np.ndarray:
         """
-        Create a mask from the given bounding boxes.
-        Supports axis-aligned, oriented, polygonal, and circular exclusion masks.
+        Build a detection mask of the reference frame's size that excludes the given regions.
+
+        Each region is grown by mask_margin_ratio, and regions with non-finite coordinates are
+        skipped with a warning. The box formats, one region per row:
+
+        - 'xywh': [x_center, y_center, width, height], axis-aligned
+        - 'xywha': [x_center, y_center, width, height, angle_degrees], oriented
+        - 'four': [x1, y1, x2, y2, x3, y3, x4, y4], four corners, oriented or axis-aligned
+        - 'polygon': [x1, y1, ..., xN, yN] per row, or one (N, 2) array per polygon
+        - 'circle': [x_center, y_center, radius]
 
         Args:
-            boxes: Array of bounding boxes
-            box_format: Format of the boxes - 'xywh', 'xywha', 'four', 'polygon', or 'circle'
-                - 'xywh': [x_center, y_center, width, height] - axis-aligned
-                - 'xywha': [x_center, y_center, width, height, angle_degrees] - oriented
-                - 'four': [x1, y1, x2, y2, x3, y3, x4, y4] - four corners (can be oriented or axis-aligned)
-                - 'polygon': polygon points, either flattened [x1, y1, ..., xN, yN] per row
-                  or shape (N, 2) per polygon
-                - 'circle': [x_center, y_center, radius]
+            boxes: Regions to exclude.
+            box_format: One of the formats above.
 
         Returns:
-            Binary mask with 255 for regions to include and 0 for regions to exclude
+            A uint8 mask, 255 where features may be detected and 0 in the excluded regions.
         """
         if self.h is None or self.w is None:
             self.logger.error("Reference frame is not set.")
@@ -1004,13 +1056,21 @@ class Stabilizer:
     @timer(PROFILING)
     def warp_cur_frame(self) -> Union[np.ndarray, None]:
         """
-        Warp the current frame to the reference frame using the current transformation matrix.
+        Warp the frame last passed to stabilize() onto the reference frame.
+
+        Returns:
+            The warped frame, the input frame unchanged if no matrix is available yet, or None if
+                there is no current frame.
         """
         return self.warp_frame(self.cur_frame)
 
     def warp_frame(self, frame: np.ndarray) -> Union[np.ndarray, None]:
         """
-        Warp the given frame to the reference frame using the current transformation matrix.
+        Warp a frame onto the reference frame with the current transformation matrix.
+
+        Returns:
+            The warped frame, at the reference frame's size; the input frame unchanged if no matrix
+                is available yet; None if frame is None.
         """
         if frame is None:
             return None
@@ -1030,7 +1090,15 @@ class Stabilizer:
 
     def transform_cur_boxes(self, out_box_format: str = 'xywh') -> Union[np.ndarray, None]:
         """
-        Warp the current bounding boxes to the reference frame using the current transformation matrix.
+        Map the boxes last passed to stabilize() into the reference frame.
+
+        The boxes must be in 'xywh', 'xywha', or 'four' format.
+
+        Args:
+            out_box_format: 'xywh', 'xywha', or 'four'.
+
+        Returns:
+            The transformed boxes, or None if there are none (including when mask_use is False).
         """
         return self.transform_boxes(self.cur_boxes, self.cur_trans_matrix, self.cur_box_format, out_box_format)
 
@@ -1038,16 +1106,18 @@ class Stabilizer:
         self, boxes: np.ndarray, trans_matrix: np.ndarray, in_box_format: str = 'xywh', out_box_format: str = 'xywh'
     ) -> Union[np.ndarray, None]:
         """
-        Transform the provided bounding boxes using the provided transformation matrix.
+        Transform boxes with a given matrix, of the configured transformation_type.
 
         Args:
-            boxes: Input bounding boxes
-            trans_matrix: Transformation matrix (homography or affine)
-            in_box_format: Input format - 'xywh', 'xywha', or 'four'
-            out_box_format: Output format - 'xywh', 'xywha', or 'four'
+            boxes: Boxes to transform, one per row.
+            trans_matrix: 3x3 homography or 2x3 affine matrix.
+            in_box_format: 'xywh', 'xywha', or 'four'.
+            out_box_format: 'xywh', 'xywha', or 'four'. 'xywha' is approximate under non-uniform
+                scaling, so 'four' is preferred.
 
         Returns:
-            Transformed boxes in the requested output format
+            The transformed boxes in out_box_format; boxes unchanged if trans_matrix is None; None
+                if boxes is None.
         """
         if boxes is None:
             return None
@@ -1092,40 +1162,40 @@ class Stabilizer:
 
     def get_cur_frame(self) -> Union[np.ndarray, None]:
         """
-        Get the current frame.
+        Return the frame last passed to stabilize(), or None.
         """
         return self.cur_frame
 
     def get_cur_boxes(self) -> Union[np.ndarray, None]:
         """
-        Get the current bounding boxes.
+        Return the boxes last passed to stabilize(), or None (always None when mask_use is False).
         """
         return self.cur_boxes
 
     def get_cur_trans_matrix(self) -> Union[np.ndarray, None]:
         """
-        Get the current transformation matrix.
+        Return the current-to-reference matrix (3x3 projective or 2x3 affine), or None before the
+        first successful estimation.
         """
         return self.cur_trans_matrix
 
     def get_cur_inliers_count(self) -> Union[int, None]:
         """
-        Get the number of inliers used to estimate the current transformation matrix.
-        Returns None if unavailable (e.g., estimation failed or not yet computed).
+        Return the number of inliers behind the current matrix, or None if estimation failed or
+        has not run.
         """
         return self.cur_inliers_count
 
     def get_cur_num_matches(self) -> Union[int, None]:
         """
-        Get the number of good matches (point-pairs) fed to the transform estimator,
-        i.e. the denominator of inliers/total. Returns None if stabilize() has not yet been called.
+        Return the number of filtered matches (point pairs) passed to the estimator, the
+        denominator of the inlier ratio, or None before the first stabilize().
         """
         return len(self.cur_inliers) if self.cur_inliers is not None else None
 
     def get_cur_num_keypoints(self) -> tuple:
         """
-        Get the number of detected keypoints as (num_reference_keypoints, num_current_keypoints).
-        Either entry is None if the corresponding keypoints are unavailable.
+        Return the keypoint counts as (reference, current); either is None if unavailable.
         """
         return (
             len(self.ref_kpts) if self.ref_kpts is not None else None,
@@ -1134,7 +1204,7 @@ class Stabilizer:
 
     def get_ransac_reproj_threshold(self) -> float:
         """
-        Get the reprojection threshold actually handed to the estimator, in full-resolution pixels.
+        Return the reprojection threshold actually handed to the estimator, in full-resolution pixels.
 
         Correspondences are rescaled to full resolution before estimation, so the estimator's
         threshold is always a full-resolution distance. With ransac_threshold_space='full' that is
@@ -1148,7 +1218,7 @@ class Stabilizer:
 
     def get_basic_info(self) -> dict:
         """
-        Get basic information about the Stabilizer.
+        Return the main settings: detector, matcher, filter, transformation type, CLAHE, and mask use.
         """
         return {
             'detector_name': self.detector_name,

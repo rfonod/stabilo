@@ -1,6 +1,6 @@
 # Stabilo — Detailed Usage Guide
 
-> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface) and the [`scripts/README.md`](../scripts/README.md) for the threshold-analysis tooling.
+> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface) and the [`scripts/README.md`](https://github.com/rfonod/stabilo/blob/main/scripts/README.md) for the threshold-analysis tooling.
 >
 > **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions. Learning-based detectors instead run on any torch device via the `device` option.
 
@@ -38,6 +38,7 @@
   - [14. Testing and Development](#14-testing-and-development)
     - [Tests that are skipped by default](#tests-that-are-skipped-by-default)
     - [Core-dependency smoke test](#core-dependency-smoke-test)
+    - [Documentation site](#documentation-site)
   - [15. Command-Line Interface](#15-command-line-interface)
     - [Using an external logger](#using-an-external-logger)
 
@@ -72,7 +73,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 ```
 
-<details>
+<details markdown="1">
 <summary>Alternatives: conda or uv</summary>
 
 **[Miniconda](https://www.anaconda.com/docs/getting-started/miniconda/install):**
@@ -352,7 +353,7 @@ Every classical detector keeps at most `max_features` keypoints in the current f
 | `disk` | Float (128-d) | ❌ | Robust learned sparse features. Works with `bf`/`flann`/`lightglue`. |
 | `dedode` | Float (256-d) | ❌ | Decoupled detect-and-describe; strong but slower. Works with `bf`/`flann`/`lightglue`. Weights via `dedode_detector_weights` / `dedode_descriptor_weights`. |
 | `keynet` | Float (128-d) | ✅ | KeyNet detector + HardNet descriptor, with an OriNet orientation estimator. The only rotation-invariant learned option. Works with `bf`/`flann`/`lightglue`. |
-| `loftr` | Detector-free | ❌ | Semi-dense image-pair matching; produces correspondences directly, so `matcher_name` and `filter_type` are ignored. Weights via `loftr_weights`; filter correspondences with `loftr_confidence`. |
+| `loftr` | Detector-free | ❌ | Semi-dense image-pair matching; produces correspondences directly, so `filter_type` and the `bf`/`flann` choice of `matcher_name` are ignored (`lightglue` is rejected). Weights via `loftr_weights`; filter correspondences with `loftr_confidence`. |
 
 Learning-based detectors receive the same CLAHE, downsampling, and exclusion-mask handling as the classical ones: masks are applied by discarding keypoints (or LoFTR correspondences) that fall in excluded regions, and keypoint coordinates are rescaled back to full resolution after downsampled detection. `max_features` caps the number of detected keypoints; the `brisk_threshold`/`kaze_threshold`/`akaze_threshold` options do not apply. LoFTR matches on a coarse grid of stride 8, so its input is zero-padded at the bottom and right to a multiple of 8 and correspondences falling in the padding are dropped. Before v1.4.5 it was not padded, and a processed frame whose sides are not multiples of 8 (for example 691×389, a 4K frame at `downsample_ratio: 0.18`) was registered with a systematic error that grows toward the far edges, several to tens of pixels at 4K. Select the compute device with `device` (`auto` picks cuda > mps > cpu). Note that `gpu=True` (OpenCV CUDA) is incompatible with learning-based detectors; use `device='cuda'` instead.
 
@@ -382,7 +383,7 @@ Stabilo emits a warning, but does not cap the resolution, when the processed fra
 | Detector | Guideline (processed frame) | Suggested for a 4K input (3840×2160) |
 |---|---|---|
 | `xfeat` | 2.0 MP | `--downsample-ratio 0.49` |
-| `disk`, `dedode`, `keynet` | 0.5 MP | `--downsample-ratio 0.25` |
+| `disk`, `dedode`, `keynet` | 0.5 MP | `--downsample-ratio 0.24` |
 | `loftr` | 0.3 MP | `--downsample-ratio 0.19` |
 
 These are guidelines for a machine with a few GB of free RAM, not hard limits; a large GPU tolerates more. Lower `downsample_ratio` further if the process is killed or the machine begins to swap.
@@ -542,6 +543,18 @@ python .github/scripts/smoke_core.py --core-only
 ```
 
 `--core-only` additionally asserts that the `extras` dependency (matplotlib) is absent. CI runs this as the `core-install` job on every push and pull request.
+
+### Documentation site
+
+The documentation at [rfonod.github.io/stabilo](https://rfonod.github.io/stabilo/) is built with MkDocs and the Material theme from `mkdocs.yml` and the `docs/` folder. The CLI reference is generated from the installed `stabilo` parsers and the API reference from the `Stabilizer` docstrings, so both follow the code. Build it locally with:
+
+```bash
+pip install -e '.[docs]'
+mkdocs serve            # live preview at http://127.0.0.1:8000
+mkdocs build --strict   # the check CI runs; fails on any warning
+```
+
+The `docs` workflow builds the site on every pull request and deploys it to GitHub Pages on every push to `main`.
 
 ---
 
