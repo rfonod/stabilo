@@ -542,7 +542,7 @@ pip install .
 python .github/scripts/smoke_core.py --core-only
 ```
 
-`--core-only` additionally asserts that the `dev` dependencies (pytest, ruff) are absent. CI runs this as the `core-install` job on every push and pull request.
+`--core-only` additionally asserts that none of the optional dependencies is installed, reading them from the installed package metadata so every group in `[project.optional-dependencies]` is covered. CI runs this as the `core-install` job on every push and pull request.
 
 ### Documentation site
 

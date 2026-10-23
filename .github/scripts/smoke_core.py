@@ -13,12 +13,13 @@ mandatory, without needing pytest or the 4K sample clip in data/.
 
 Usage:
     python .github/scripts/smoke_core.py               # run the smoke test
-    python .github/scripts/smoke_core.py --core-only   # also assert the dev dependencies are absent
+    python .github/scripts/smoke_core.py --core-only   # also assert no optional dependency is installed
 """
 
 import argparse
-import importlib.util
+import importlib.metadata
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,6 @@ import stabilo
 FRAMES = 12
 WIDTH, HEIGHT = 640, 480
 BOX = (90.0, 60.0)  # width, height of the synthetic 'vehicle' used as track and mask
-OPTIONAL_MODULES = ('pytest', 'ruff')
 
 
 def synthesize_inputs(directory: Path) -> tuple[Path, Path]:
@@ -107,18 +107,43 @@ def count_frames(video_filepath: Path) -> int:
     return frames
 
 
+def is_installed(distribution: str) -> bool:
+    """
+    Whether a distribution is installed, looked up by its (normalized) distribution name.
+    """
+    try:
+        importlib.metadata.distribution(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return False
+    return True
+
+
 def check_core_only() -> None:
     """
-    Assert the 'dev' dependencies are absent, i.e. this really is a core-only install.
+    Assert no optional dependency of stabilo is installed, i.e. this really is a core-only install.
+
+    The optional dependencies are read from the installed package metadata (the requirements carrying an
+    'extra' marker), so every group in pyproject.toml is covered without a list to keep in step with it.
     """
-    present = [name for name in OPTIONAL_MODULES if importlib.util.find_spec(name) is not None]
+    try:
+        requirements = importlib.metadata.requires('stabilo') or []
+    except importlib.metadata.PackageNotFoundError:
+        sys.exit('stabilo has no installed metadata; install it with "pip install ." first')
+    optional = {
+        re.match(r'[A-Za-z0-9._-]+', requirement).group()
+        for requirement in requirements
+        if 'extra' in requirement.partition(';')[2]
+    }
+    if not optional:
+        sys.exit('the stabilo metadata lists no optional dependencies, so a core-only install cannot be checked')
+    present = sorted(name for name in optional if is_installed(name))
     if present:
-        sys.exit(f'not a core-only environment: {present} importable; install with "pip install ." only')
+        sys.exit(f'not a core-only environment: {present} installed; install with "pip install ." only')
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--core-only', action='store_true', help='also assert pytest and ruff (dev) are not installed')
+    parser.add_argument('--core-only', action='store_true', help='also assert no optional dependency is installed')
     args = parser.parse_args()
 
     if args.core_only:
