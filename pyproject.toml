@@ -9,11 +9,9 @@
 #   pip install stabilo                                       # from PyPI
 #   pip install -e .                                          # core (editable)
 #   pip install -e '.[dev]'                                   # core + dev
-#   pip install -e '.[extras]'                                # core + extras
 #   pip install -e '.[docs]'                                  # core + docs (MkDocs site)
 #   uv venv --python 3.11 && uv pip install -e .              # core (uv; faster)
 #   uv venv --python 3.11 && uv pip install -e '.[dev]'       # core + dev (uv)
-#   uv venv --python 3.11 && uv pip install -e '.[extras]'    # core + extras (uv)
 #
 # Command-line interface (installed as the 'stabilo' console command):
 #   stabilo video <input> [options]                          # stabilize a video
@@ -66,13 +64,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-extras = [
-    "matplotlib>=3.5.0"
-]
 dev = [
     "pytest>=7.0.0",
-    "ruff>=0.11.0",
-    "matplotlib>=3.5.0"
+    "ruff>=0.11.0"
 ]
 docs = [
     "mkdocs>=1.6,<2",
