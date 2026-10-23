@@ -279,7 +279,7 @@ In the same `.venv-cuda` environment. Because the wheel installed in Section 4 i
 ```bash
 pip install -e . --no-deps
 pip install pyyaml tqdm   # core runtime deps other than opencv and numpy (both already installed)
-pip install pytest ruff matplotlib   # dev extras, for the test suite / lint
+pip install pytest ruff   # dev extras, for the test suite / lint
 ```
 
 **From PyPI, without cloning the repo:**
@@ -287,7 +287,6 @@ pip install pytest ruff matplotlib   # dev extras, for the test suite / lint
 ```bash
 pip install stabilo --no-deps
 pip install pyyaml tqdm   # core runtime deps other than opencv and numpy (both already installed)
-pip install matplotlib   # optional, only needed for scripts/find_threshold_models.py (the `extras` install group)
 ```
 There's no local `tests/` directory in this path, so `pytest`/`ruff` aren't relevant; use the clone/fork path above if the CUDA build needs to be tested against stabilo's test suite.
 

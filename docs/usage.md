@@ -1,6 +1,6 @@
 # Stabilo — Detailed Usage Guide
 
-> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface) and the [`scripts/README.md`](https://github.com/rfonod/stabilo/blob/main/scripts/README.md) for the threshold-analysis tooling.
+> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface).
 >
 > **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions. Learning-based detectors instead run on any torch device via the `device` option.
 
@@ -542,7 +542,7 @@ pip install .
 python .github/scripts/smoke_core.py --core-only
 ```
 
-`--core-only` additionally asserts that the `extras` dependency (matplotlib) is absent. CI runs this as the `core-install` job on every push and pull request.
+`--core-only` additionally asserts that the `dev` dependencies (pytest, ruff) are absent. CI runs this as the `core-install` job on every push and pull request.
 
 ### Documentation site
 
