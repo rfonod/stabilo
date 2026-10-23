@@ -15,7 +15,8 @@ KORNIA = importlib.util.find_spec('kornia') is not None
 RUN_DL = KORNIA and os.environ.get('STABILO_DL_TESTS') == '1'
 requires_dl = pytest.mark.skipif(
     not RUN_DL,
-    reason='set STABILO_DL_TESTS=1 (with kornia installed) to run DL end-to-end tests; they download pretrained weights',
+    reason='set STABILO_DL_TESTS=1 (with kornia installed) to run DL end-to-end tests; '
+    'they download pretrained weights',
 )
 
 SPARSE = sorted(Stabilizer.SPARSE_DL_DETECTORS)

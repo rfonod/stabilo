@@ -231,7 +231,7 @@ class Stabilizer:
         self._validate_arguments()
         self._torch_device = None
         if self.detector_name in self.DL_DETECTORS or self.matcher_name == 'lightglue':
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             self._torch_device = dl.resolve_device(self.device)
         if self.gpu:
@@ -320,11 +320,11 @@ class Stabilizer:
         elif detector_name == "akaze":
             return self._create_akaze_detectors()
         elif detector_name in self.SPARSE_DL_DETECTORS:
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             return dl.create_dl_detectors(self)
         elif detector_name == "loftr":
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             self._loftr = dl.create_loftr(self)
             return None, None
@@ -411,7 +411,7 @@ class Stabilizer:
         elif self.matcher_name == "flann":
             self.matcher = self._create_flann_matcher()
         elif self.matcher_name == "lightglue":
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             self.matcher = dl.create_lightglue_matcher(self)
 
@@ -548,7 +548,8 @@ class Stabilizer:
         if self.mask_use:
             if boxes is None:
                 self.logger.warning(
-                    f'Mask is set to be used, but no bounding boxes were provided for the {"reference" if is_reference else "current"} frame.'
+                    f'Mask is set to be used, but no bounding boxes were provided for the '
+                    f'{"reference" if is_reference else "current"} frame.'
                 )
         else:
             boxes = None  # if mask is not to be used, ignore the bounding boxes even if provided
@@ -704,7 +705,7 @@ class Stabilizer:
             if ratio != 1.0:
                 model_input = cv2.resize(gray, (0, 0), fx=ratio, fy=ratio)
                 mask_ds = cv2.resize(mask, (0, 0), fx=ratio, fy=ratio) if mask is not None else None
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             tensor = dl.to_tensor_gray(model_input, self._torch_device)
             if ref_frame:
@@ -729,7 +730,7 @@ class Stabilizer:
         try:
             kpts, desc = detector.detectAndCompute(model_input, mask_ds)
         except (RuntimeError, ValueError) as e:
-            from . import dl
+            from . import dl  # noqa: PLC0415
 
             if dl.is_resource_error(e):
                 raise
@@ -750,7 +751,7 @@ class Stabilizer:
             self.logger.error("Reference frame is not set.")
             sys.exit(1)
 
-        from . import dl
+        from . import dl  # noqa: PLC0415
 
         ref_xy, cur_xy, conf = self._loftr.match(self._loftr_ref_tensor, self._loftr_cur_tensor)
         keep = conf >= self.loftr_confidence
@@ -1153,7 +1154,8 @@ class Stabilizer:
             # For xywha output, we need to compute angle from transformed corners
             # This is an approximation - we compute the angle from the first two corners
             self.logger.warning(
-                "Converting to 'xywha' format after transformation may lose precision for non-uniform scaling. Consider using 'four' format."
+                "Converting to 'xywha' format after transformation may lose precision for non-uniform scaling. "
+                "Consider using 'four' format."
             )
             return self._four2xywha(boxes_transformed)
         else:
@@ -1301,7 +1303,8 @@ class Stabilizer:
             raise ValueError(f"Invalid filter type: {self.filter_type}. Choose from {self.VALID_FILTER_TYPES}")
         if self.transformation_type not in self.VALID_TRANSFORMATION_TYPES:
             raise ValueError(
-                f"Invalid transformation type: {self.transformation_type}. Choose from {self.VALID_TRANSFORMATION_TYPES}"
+                f"Invalid transformation type: {self.transformation_type}. "
+                f"Choose from {self.VALID_TRANSFORMATION_TYPES}"
             )
         if self.match_query_frame not in self.VALID_MATCH_QUERY_FRAMES:
             raise ValueError(

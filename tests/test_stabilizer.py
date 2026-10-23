@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from stabilo import Stabilizer
-from stabilo.utils import xywh2four
+from stabilo.utils import is_box_rotated, xywh2four, xywha2four
 
 
 @pytest.fixture
@@ -619,8 +619,6 @@ def test_transform_boxes_xywha(default_stabilizer, images):
 
 def test_is_box_rotated_utility():
     """Test the is_box_rotated utility function"""
-    from stabilo.utils import is_box_rotated
-
     # Axis-aligned box
     box_aligned = np.array([10, 10, 50, 10, 50, 40, 10, 40])
     assert not is_box_rotated(box_aligned)
@@ -639,8 +637,6 @@ def test_is_box_rotated_utility():
 
 def test_xywha2four_conversion():
     """Test conversion from xywha to four-point format"""
-    from stabilo.utils import xywha2four
-
     # Test with axis-aligned box (0 degrees)
     boxes_xywha = np.array([[100, 100, 60, 40, 0]])
     boxes_four = xywha2four(boxes_xywha)

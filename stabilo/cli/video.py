@@ -290,7 +290,8 @@ def configure_parser(subparsers):
         "-mei",
         type=int,
         default=None,
-        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]",
+        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' "
+        "that does not span to the last column]",
     )
     group.add_argument(
         "--mask-enc",

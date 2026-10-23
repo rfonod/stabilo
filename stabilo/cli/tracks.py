@@ -28,7 +28,8 @@ Tracks Options:
     --tracks TRACKS    : Filepath to the tracks file (default: input with .txt extension).
     --boxes-frame-idx BOXES_FRAME_IDX : Frame number column index in the tracks file (default: 0).
     --boxes-start-idx BOXES_START_IDX : Start column index of the 4 BB parameters in the tracks file (default: 2).
-    --boxes-end-idx BOXES_END_IDX : Exclusive end column index for box columns (default: auto from format). Required for 'polygon' when it does not run to the last column.
+    --boxes-end-idx BOXES_END_IDX : Exclusive end column index for box columns (default: auto from format).
+        Required for 'polygon' when it does not run to the last column.
     --boxes-enc BOXES_ENC : Bounding box encoding. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four' (default: yolo).
 
 Mask Options:
@@ -36,8 +37,10 @@ Mask Options:
     --mask-path MASK_PATH : Custom mask file for stabilization (default: same as boxes).
     --mask-frame-idx MASK_FRAME_IDX : Frame number column index in the mask file (default: 0).
     --mask-start-idx MASK_START_IDX : Start column index of the bounding box parameters in the mask file (default: 2).
-    --mask-end-idx MASK_END_IDX : Exclusive end column index for mask columns (default: auto from format). Required for 'polygon' when it does not run to the last column.
-    --mask-enc MASK_ENC : Mask format. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon', 'circle' (default: yolo).
+    --mask-end-idx MASK_END_IDX : Exclusive end column index for mask columns (default: auto from format).
+        Required for 'polygon' when it does not run to the last column.
+    --mask-enc MASK_ENC : Mask format. Choices: 'yolo', 'pascal', 'coco', 'xywha', 'four', 'polygon',
+        'circle' (default: yolo).
 
 Visualization Options:
     --viz              : Show the stabilized and un-stabilized tracks.
@@ -62,7 +65,7 @@ Examples:
     4. Stabilize the tracks using a custom config file and custom mask file. Save the stabilized tracks:
         stabilo tracks path/to/video.mp4 --save --custom-config path/to/config.yaml --mask-path path/to/mask.txt
     5. Stabilize the tracks using a custom config file and save the visualization with custom tail length and radius:
-        stabilo tracks path/to/video.mp4 --viz --save-viz --custom-config path/to/config.yaml --tail-length 50 --tail-radius 15
+        stabilo tracks path/to/video.mp4 --viz --save-viz -cc path/to/config.yaml --tail-length 50 --tail-radius 15
     6. Stabilize the tracks using CUDA GPU acceleration (requires a CUDA-enabled OpenCV build, see docs/cuda.md):
         stabilo tracks path/to/video.mp4 --gpu --save
 
@@ -324,7 +327,8 @@ def configure_parser(subparsers):
         "-bei",
         type=int,
         default=None,
-        help="exclusive end column index for box columns [default: auto from format, required for 'polygon' that does not span to the last column]",
+        help="exclusive end column index for box columns [default: auto from format, required for 'polygon' "
+        "that does not span to the last column]",
     )
     group.add_argument(
         "--boxes-enc",
@@ -349,7 +353,8 @@ def configure_parser(subparsers):
         "-mei",
         type=int,
         default=None,
-        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' that does not span to the last column]",
+        help="exclusive end column index for mask columns [default: auto from format, required for 'polygon' "
+        "that does not span to the last column]",
     )
     group.add_argument(
         "--mask-enc",
