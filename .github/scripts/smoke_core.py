@@ -13,7 +13,7 @@ mandatory, without needing pytest or the 4K sample clip in data/.
 
 Usage:
     python .github/scripts/smoke_core.py               # run the smoke test
-    python .github/scripts/smoke_core.py --core-only   # also assert matplotlib (extras) is absent
+    python .github/scripts/smoke_core.py --core-only   # also assert the dev dependencies are absent
 """
 
 import argparse
@@ -33,7 +33,7 @@ import stabilo
 FRAMES = 12
 WIDTH, HEIGHT = 640, 480
 BOX = (90.0, 60.0)  # width, height of the synthetic 'vehicle' used as track and mask
-OPTIONAL_MODULES = ('matplotlib',)
+OPTIONAL_MODULES = ('pytest', 'ruff')
 
 
 def synthesize_inputs(directory: Path) -> tuple[Path, Path]:
@@ -109,7 +109,7 @@ def count_frames(video_filepath: Path) -> int:
 
 def check_core_only() -> None:
     """
-    Assert the 'extras' dependency is absent, i.e. this really is a core-only install.
+    Assert the 'dev' dependencies are absent, i.e. this really is a core-only install.
     """
     present = [name for name in OPTIONAL_MODULES if importlib.util.find_spec(name) is not None]
     if present:
@@ -118,7 +118,7 @@ def check_core_only() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--core-only', action='store_true', help='also assert matplotlib (extras) is not installed')
+    parser.add_argument('--core-only', action='store_true', help='also assert pytest and ruff (dev) are not installed')
     args = parser.parse_args()
 
     if args.core_only:
