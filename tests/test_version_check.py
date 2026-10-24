@@ -9,6 +9,7 @@ import logging
 import pytest
 
 import stabilo.version_check as vc
+from stabilo import __version__
 
 
 @pytest.fixture
@@ -51,8 +52,6 @@ def test_newer_version_warns(cache_in_tmp, monkeypatch):
 
 
 def test_same_version_silent(cache_in_tmp, monkeypatch):
-    from stabilo import __version__
-
     monkeypatch.setattr(vc.urllib.request, 'urlopen', _fake_urlopen(__version__))
     cap = _CaptureLogger()
     vc.check_for_updates(cap.logger, blocking=True)

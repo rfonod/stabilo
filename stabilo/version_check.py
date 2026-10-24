@@ -89,7 +89,7 @@ def _fetch_latest() -> str:
 
 
 def _notify_if_newer(latest: str, logger) -> None:
-    from stabilo import __version__
+    from stabilo import __version__  # noqa: PLC0415
 
     if latest and _parse_version(latest) > _parse_version(__version__):
         message = (

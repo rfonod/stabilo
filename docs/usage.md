@@ -1,6 +1,6 @@
 # Stabilo — Detailed Usage Guide
 
-> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface) and the [`scripts/README.md`](https://github.com/rfonod/stabilo/blob/main/scripts/README.md) for the threshold-analysis tooling.
+> **Command-line interface**: installing stabilo provides a `stabilo` console command with `video`, `tracks`, and `config` subcommands. See [15. Command-Line Interface](#15-command-line-interface).
 >
 > **CUDA GPU acceleration** (`gpu=True`) requires a CUDA-enabled OpenCV build; see [`docs/cuda.md`](cuda.md) for build instructions. Learning-based detectors instead run on any torch device via the `device` option.
 
@@ -271,15 +271,18 @@ Supported `in_box_format` / `out_box_format` values for transformation: `'xywh'`
 
 ## 7. Point Transformation
 
-To transform an arbitrary pixel coordinate from the current frame to the reference frame:
+To transform an arbitrary pixel coordinate from the current frame to the reference frame, multiply it in homogeneous form by the matrix from `get_cur_trans_matrix()`, which is 3x3 for `projective` and 2x3 for `affine`:
 
 ```python
-# projective (homography)
+M = stabilizer.get_cur_trans_matrix()
 cur_point = np.array([x, y, 1.0])
-ref_point_h = stabilizer.get_cur_trans_matrix() @ cur_point
+
+# projective (homography, 3x3)
+ref_point_h = M @ cur_point
 ref_point = ref_point_h[:2] / ref_point_h[2]   # divide by homogeneous coordinate
 
-# affine (no perspective division needed — last row is [0, 0, 1])
+# affine (2x3): the product is already (x, y)
+ref_point = M @ cur_point
 ```
 
 ---
@@ -493,8 +496,8 @@ Match-quality statistics are also exposed through dedicated getters:
 
 Set `benchmark=True` when running systematic parameter evaluation:
 
-- If transformation estimation fails or produces `None`, the identity matrix (`np.eye(3)`) is used instead of the last known matrix.
-- Log warnings about missing matches and fallback matrices are suppressed for cleaner batch output.
+- If transformation estimation fails or produces `None`, the identity matrix (`np.eye(3)` for `projective`, `np.eye(2, 3)` for `affine`) is used instead of the last known matrix.
+- Log warnings about missing matches and fallback matrices are suppressed for cleaner batch output, and the learning-based resolution warning and the PyPI update check are skipped.
 
 See [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) for a dedicated benchmarking and hyperparameter-tuning framework built on top of Stabilo.
 
@@ -542,7 +545,7 @@ pip install .
 python .github/scripts/smoke_core.py --core-only
 ```
 
-`--core-only` additionally asserts that the `extras` dependency (matplotlib) is absent. CI runs this as the `core-install` job on every push and pull request.
+`--core-only` additionally asserts that none of the optional dependencies is installed, reading them from the installed package metadata so every group in `[project.optional-dependencies]` is covered. CI runs this as the `core-install` job on every push and pull request.
 
 ### Documentation site
 
@@ -581,7 +584,7 @@ stabilo video data/video.mp4 --save --output data/out/ --custom-config custom.ya
 
 Resolution order is **explicit CLI flags > custom config file > built-in defaults**: a key set in the file passed to `--custom-config` fills in anything not explicitly passed as a CLI flag, and both override `stabilo/cfg/default.yaml`.
 
-Each CLI invocation performs a best-effort check for a newer stabilo release on PyPI and prints a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
+Each CLI invocation, and the first `Stabilizer` created in a Python process (unless `benchmark=True`), performs a best-effort check for a newer stabilo release on PyPI and logs a one-line notice if one is available. The PyPI response is cached for 24 hours. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
 
 ### Using an external logger
 

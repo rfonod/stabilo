@@ -58,7 +58,7 @@ git clone https://github.com/rfonod/stabilo.git
 cd stabilo && pip install -e '.[dev]'
 ```
 
-Drop `-e` for a non-editable install, and `[dev]` if you do not need pytest, ruff, and matplotlib.
+Drop `-e` for a non-editable install, and `[dev]` if you do not need pytest and ruff.
 </details>
 
 ## Quick Start
@@ -118,7 +118,6 @@ Three matchers are available: `bf` (brute force) and `flann` work with every det
 - **Acceleration**: OpenCV CUDA for the classical pipeline (`--gpu`, see [`docs/cuda.md`](docs/cuda.md)) and CUDA/MPS/CPU for the learned models (`--device mps`).
 - **Visualization**: live or recorded side-by-side rendering of matches, inliers, masks, and box trajectories (`--viz`, `--save-viz`, `--no-lines`, `--tail-length 60`). See [Visualisation mode](docs/usage.md#12-visualisation-mode).
 - **Benchmarking**: `benchmark=True` falls back to the identity matrix and silences warnings for clean batch sweeps; [Stabilo-Optimize](https://github.com/rfonod/stabilo-optimize) 🎯 wraps this into a ground-truth-free evaluation.
-- **Threshold analysis**: [`scripts/find_threshold_models.py`](scripts/find_threshold_models.py) fits how the average keypoint count of BRISK, KAZE, and AKAZE varies with their detection threshold.
 
 </details>
 
@@ -235,14 +234,16 @@ circle_masks = np.array([
 stabilizer.stabilize(cur_frame, circle_masks, box_format='circle')
 
 # Transform an arbitrary pixel coordinate into reference-frame coordinates
-ref_point = stabilizer.get_cur_trans_matrix() @ np.array([x, y, 1])
+M = stabilizer.get_cur_trans_matrix()  # 3x3 (projective) or 2x3 (affine)
+p = M @ np.array([x, y, 1.0])
+ref_point = p[:2] / p[2] if M.shape[0] == 3 else p
 ```
 
 `polygon` and `circle` are masking-only; they cannot be transformed back out. Full format specifications are in [docs/usage.md](docs/usage.md#4-supported-mask-and-box-formats).
 
 </details>
 
-> When a CLI command runs, stabilo performs a best-effort check for a newer release on PyPI and prints a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
+> The first time a CLI command runs or a `Stabilizer` is created in a process, stabilo performs a best-effort check for a newer release on PyPI (skipped with `benchmark=True`) and logs a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
 
 ## Documentation
 
@@ -250,7 +251,6 @@ The full documentation, including the CLI and API references, is published at **
 
 - [`docs/usage.md`](docs/usage.md): detailed usage guide covering the workflow, mask formats, every configuration key, the detector and matcher reference, RANSAC methods, visualization, benchmarking, and the CLI.
 - [`docs/cuda.md`](docs/cuda.md): building OpenCV with CUDA and enabling `--gpu`.
-- [`scripts/README.md`](scripts/README.md): the threshold-analysis research tool.
 
 ## Citing This Work
 
@@ -284,7 +284,7 @@ If you use **Stabilo** in your research, software, or product, please cite the f
       title = {Stabilo: A Comprehensive Python Library for Video and Trajectory Stabilization with User-Defined Masks},
       url = {https://github.com/rfonod/stabilo},
       doi = {10.5281/zenodo.12117092},
-      version = {1.4.6},
+      version = {1.4.7},
       year = {2026}
     }
     ```

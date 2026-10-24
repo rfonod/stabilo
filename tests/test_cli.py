@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
+import stabilo.version_check as vc
 from stabilo import Stabilizer, __version__
 from stabilo.cli import main
 from stabilo.cli import tracks as tracks_cli
@@ -199,10 +200,6 @@ def test_explicit_no_mask_and_viz_flags_still_override_custom_config(tmp_path):
 def test_cli_update_check_fires_once_end_to_end(tmp_path, monkeypatch):
     """Regression: main() used to call check_for_updates() directly (not the *_once variant),
     so a Stabilizer constructed during the same run fired the update check a second time."""
-    import cv2
-
-    import stabilo.version_check as vc
-
     monkeypatch.delenv('STABILO_DISABLE_UPDATE_CHECK', raising=False)
     monkeypatch.setattr(vc, '_cache_dir', lambda: tmp_path / 'cache')
     vc._state['checked'] = False
@@ -229,8 +226,6 @@ def test_cli_update_check_fires_once_end_to_end(tmp_path, monkeypatch):
 
 
 def test_video_end_to_end(tmp_path, monkeypatch):
-    import cv2
-
     monkeypatch.setenv('STABILO_DISABLE_UPDATE_CHECK', '1')
     video_path = tmp_path / 'clip.mp4'
     w, h, n = 128, 96, 6
