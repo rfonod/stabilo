@@ -234,14 +234,16 @@ circle_masks = np.array([
 stabilizer.stabilize(cur_frame, circle_masks, box_format='circle')
 
 # Transform an arbitrary pixel coordinate into reference-frame coordinates
-ref_point = stabilizer.get_cur_trans_matrix() @ np.array([x, y, 1])
+M = stabilizer.get_cur_trans_matrix()  # 3x3 (projective) or 2x3 (affine)
+p = M @ np.array([x, y, 1.0])
+ref_point = p[:2] / p[2] if M.shape[0] == 3 else p
 ```
 
 `polygon` and `circle` are masking-only; they cannot be transformed back out. Full format specifications are in [docs/usage.md](docs/usage.md#4-supported-mask-and-box-formats).
 
 </details>
 
-> When a CLI command runs, stabilo performs a best-effort check for a newer release on PyPI and prints a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
+> The first time a CLI command runs or a `Stabilizer` is created in a process, stabilo performs a best-effort check for a newer release on PyPI (skipped with `benchmark=True`) and logs a one-line notice if one is available. Set `STABILO_DISABLE_UPDATE_CHECK=1` to disable it.
 
 ## Documentation
 
