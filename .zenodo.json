@@ -50,8 +50,8 @@
   ],
   "dates": [
     {
-      "start": "2026-10-23",
-      "end": "2026-10-23",
+      "start": "2026-10-24",
+      "end": "2026-10-24",
       "type": "updated",
       "description": "Update from v1.4.6 to v1.4.7"
     }
