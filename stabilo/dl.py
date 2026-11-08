@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 # kornia's DeDoDe calls torch.autocast('cuda') unconditionally and warns on every forward off CUDA
-warnings.filterwarnings("ignore", message=".*Disabling autocast.*", category=UserWarning)
+warnings.filterwarnings("ignore", message=r".*Disabling( autocast|$)", category=UserWarning)
 
 
 def weights_cache_dir() -> Path:
