@@ -241,7 +241,7 @@ If the shell reports no match for that wildcard (e.g. zsh's "no matches found"),
 
 This can take anywhere from ~15 minutes to over an hour depending on the hardware; the `BUILD_LIST`/`BUILD_TESTS`/`BUILD_PERF_TESTS`/`BUILD_EXAMPLES`/`BUILD_DOCS` flags above cut this down significantly relative to a full default build. A clean rebuild after `rm -rf _skbuild` takes the full time again, since nothing is cached.
 
-**A note on dependency versions.** This build uses whatever `numpy` is installed in `.venv-cuda`, and targets OpenCV 5.0.0, independent of the version floors declared in stabilo's `pyproject.toml` (`opencv-python>=4.10.0`, `numpy>=1.26.4`). Those floors govern the plain CPU-only `pip install stabilo` path that most users take, and are not raised by this guide: building and testing CUDA support does not require, and should not force, a newer OpenCV/numpy baseline onto users who only need the CPU path. The dedicated venv from this section, combined with the `--no-deps` install in Section 6, keeps the two fully isolated from each other.
+**A note on dependency versions.** This build uses whatever `numpy` is installed in `.venv-cuda`, and targets OpenCV 5.0.0, independent of the version floors declared in stabilo's `pyproject.toml` (`opencv-python>=4.10.0.84`, `numpy>=1.26.4`). Those floors govern the plain CPU-only `pip install stabilo` path that most users take, and are not raised by this guide: building and testing CUDA support does not require, and should not force, a newer OpenCV/numpy baseline onto users who only need the CPU path. The dedicated venv from this section, combined with the `--no-deps` install in Section 6, keeps the two fully isolated from each other.
 
 ## 5. Verifying the Build
 
