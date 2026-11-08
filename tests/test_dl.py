@@ -79,7 +79,7 @@ def _dl_features_with(error, ref_frame=True):
 @pytest.mark.parametrize(
     'make_error',
     [
-        lambda: pytest.importorskip('torch').OutOfMemoryError('CUDA out of memory. Tried to allocate 20.00 GiB'),
+        lambda: pytest.importorskip('torch').cuda.OutOfMemoryError('CUDA out of memory. Tried to allocate 20.00 GiB'),
         lambda: RuntimeError('MPS backend out of memory (MPS allocated: 18.00 GB, other allocations: 1.2 GB)'),
         lambda: RuntimeError('Invalid buffer size: 24.00 GB'),
         lambda: RuntimeError("DefaultCPUAllocator: can't allocate memory: you tried to allocate 68719476736 bytes."),
